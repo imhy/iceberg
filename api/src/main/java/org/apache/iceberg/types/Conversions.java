@@ -32,6 +32,8 @@ import java.util.UUID;
 import org.apache.iceberg.exceptions.RuntimeIOException;
 import org.apache.iceberg.expressions.Literal;
 import org.apache.iceberg.geospatial.GeospatialBound;
+import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
+import org.apache.iceberg.util.DateTimeUtil;
 import org.apache.iceberg.util.UUIDUtil;
 import org.apache.iceberg.variants.Variant;
 import org.apache.iceberg.variants.VariantMetadata;
@@ -170,11 +172,29 @@ public class Conversions {
         return tmp.getInt();
       case LONG:
       case TIME:
-      case TIMESTAMP:
-      case TIMESTAMP_NANO:
         if (tmp.remaining() < 8) {
           // type was later promoted to long
           return (long) tmp.getInt();
+        }
+        return tmp.getLong();
+      case TIMESTAMP:
+        if (tmp.remaining() == Integer.BYTES) {
+          Preconditions.checkArgument(
+              !((Types.TimestampType) type).shouldAdjustToUTC(),
+              "Cannot promote date bound to %s",
+              type);
+          return DateTimeUtil.microsFromTimestamp(
+              DateTimeUtil.dateFromDays(tmp.getInt()).atStartOfDay());
+        }
+        return tmp.getLong();
+      case TIMESTAMP_NANO:
+        if (tmp.remaining() == Integer.BYTES) {
+          Preconditions.checkArgument(
+              !((Types.TimestampNanoType) type).shouldAdjustToUTC(),
+              "Cannot promote date bound to %s",
+              type);
+          return DateTimeUtil.nanosFromTimestamp(
+              DateTimeUtil.dateFromDays(tmp.getInt()).atStartOfDay());
         }
         return tmp.getLong();
       case FLOAT:

@@ -75,6 +75,11 @@ public class GenericParquetReaders extends BaseParquetReaders<Record> {
   }
 
   @Override
+  ParquetValueReader<?> dateAsTimestampReader(ColumnDescriptor desc, ChronoUnit unit) {
+    return new DateAsTimestampReader(desc, unit);
+  }
+
+  @Override
   protected ParquetValueReader<?> timeReader(ColumnDescriptor desc) {
     LogicalTypeAnnotation time = desc.getPrimitiveType().getLogicalTypeAnnotation();
     Preconditions.checkArgument(
@@ -140,6 +145,24 @@ public class GenericParquetReaders extends BaseParquetReaders<Record> {
     @Override
     public LocalDate read(LocalDate reuse) {
       return EPOCH_DAY.plusDays(column.nextInteger());
+    }
+  }
+
+  private static class DateAsTimestampReader
+      extends ParquetValueReaders.PrimitiveReader<LocalDateTime> {
+    private final ChronoUnit unit;
+
+    DateAsTimestampReader(ColumnDescriptor desc, ChronoUnit unit) {
+      super(desc);
+      this.unit = unit;
+    }
+
+    @Override
+    public LocalDateTime read(LocalDateTime reuse) {
+      LocalDateTime timestamp = EPOCH_DAY.plusDays(column.nextInteger()).atStartOfDay();
+      // LocalDateTime can represent dates outside the target timestamp's long range.
+      long value = unit.between(EPOCH.toLocalDateTime(), timestamp);
+      return EPOCH.toLocalDateTime().plus(value, unit);
     }
   }
 
