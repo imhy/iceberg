@@ -57,7 +57,7 @@ public class MaxAggregate<T> extends ValueAggregate<T> {
 
   @Override
   protected Object evaluateRef(DataFile file) {
-    return Conversions.fromByteBuffer(type, safeGet(file.upperBounds(), fieldId));
+    return Conversions.boundFromByteBuffer(type, safeGet(file.upperBounds(), fieldId));
   }
 
   @Override

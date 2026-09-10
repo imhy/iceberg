@@ -127,7 +127,7 @@ public class InclusiveMetricsEvaluator {
     protected <T> T lowerBound(BoundReference<T> ref) {
       int id = ref.fieldId();
       if (lowerBounds != null && lowerBounds.containsKey(id)) {
-        return Conversions.fromByteBuffer(ref.ref().type(), lowerBounds.get(id));
+        return Conversions.boundFromByteBuffer(ref.ref().type(), lowerBounds.get(id));
       }
 
       return null;
@@ -137,7 +137,7 @@ public class InclusiveMetricsEvaluator {
     protected <T> T upperBound(BoundReference<T> ref) {
       int id = ref.fieldId();
       if (upperBounds != null && upperBounds.containsKey(id)) {
-        return Conversions.fromByteBuffer(ref.ref().type(), upperBounds.get(id));
+        return Conversions.boundFromByteBuffer(ref.ref().type(), upperBounds.get(id));
       }
 
       return null;

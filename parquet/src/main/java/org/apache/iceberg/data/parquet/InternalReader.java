@@ -18,6 +18,7 @@
  */
 package org.apache.iceberg.data.parquet;
 
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -30,6 +31,7 @@ import org.apache.iceberg.parquet.ParquetValueReader;
 import org.apache.iceberg.parquet.ParquetValueReaders;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.types.Types.StructType;
+import org.apache.iceberg.util.DateTimeUtil;
 import org.apache.parquet.column.ColumnDescriptor;
 import org.apache.parquet.schema.MessageType;
 
@@ -115,6 +117,28 @@ public class InternalReader<T extends StructLike> extends BaseParquetReaders<T> 
   @Override
   protected ParquetValueReader<?> dateReader(ColumnDescriptor desc) {
     return new ParquetValueReaders.UnboxedReader<>(desc);
+  }
+
+  @Override
+  ParquetValueReader<?> dateAsTimestampReader(ColumnDescriptor desc, ChronoUnit unit) {
+    return new DateAsTimestampReader(desc, unit);
+  }
+
+  private static class DateAsTimestampReader extends ParquetValueReaders.PrimitiveReader<Long> {
+    private final ChronoUnit unit;
+
+    DateAsTimestampReader(ColumnDescriptor desc, ChronoUnit unit) {
+      super(desc);
+      this.unit = unit;
+    }
+
+    @Override
+    public Long read(Long reuse) {
+      int days = column.nextInteger();
+      return unit == ChronoUnit.NANOS
+          ? DateTimeUtil.nanosFromDays(days)
+          : DateTimeUtil.microsFromDays(days);
+    }
   }
 
   @Override

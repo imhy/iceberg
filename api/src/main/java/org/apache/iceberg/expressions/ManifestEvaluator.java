@@ -177,7 +177,7 @@ public class ManifestEvaluator {
         return ROWS_CANNOT_MATCH; // values are all null
       }
 
-      T lower = Conversions.fromByteBuffer(ref.type(), lowerBound);
+      T lower = Conversions.boundFromByteBuffer(ref.type(), lowerBound);
 
       int cmp = lit.comparator().compare(lower, lit.value());
       if (cmp >= 0) {
@@ -195,7 +195,7 @@ public class ManifestEvaluator {
         return ROWS_CANNOT_MATCH; // values are all null
       }
 
-      T lower = Conversions.fromByteBuffer(ref.type(), lowerBound);
+      T lower = Conversions.boundFromByteBuffer(ref.type(), lowerBound);
 
       int cmp = lit.comparator().compare(lower, lit.value());
       if (cmp > 0) {
@@ -213,7 +213,7 @@ public class ManifestEvaluator {
         return ROWS_CANNOT_MATCH; // values are all null
       }
 
-      T upper = Conversions.fromByteBuffer(ref.type(), upperBound);
+      T upper = Conversions.boundFromByteBuffer(ref.type(), upperBound);
 
       int cmp = lit.comparator().compare(upper, lit.value());
       if (cmp <= 0) {
@@ -231,7 +231,7 @@ public class ManifestEvaluator {
         return ROWS_CANNOT_MATCH; // values are all null
       }
 
-      T upper = Conversions.fromByteBuffer(ref.type(), upperBound);
+      T upper = Conversions.boundFromByteBuffer(ref.type(), upperBound);
 
       int cmp = lit.comparator().compare(upper, lit.value());
       if (cmp < 0) {
@@ -249,13 +249,13 @@ public class ManifestEvaluator {
         return ROWS_CANNOT_MATCH; // values are all null and literal cannot contain null
       }
 
-      T lower = Conversions.fromByteBuffer(ref.type(), fieldStats.lowerBound());
+      T lower = Conversions.boundFromByteBuffer(ref.type(), fieldStats.lowerBound());
       int cmp = lit.comparator().compare(lower, lit.value());
       if (cmp > 0) {
         return ROWS_CANNOT_MATCH;
       }
 
-      T upper = Conversions.fromByteBuffer(ref.type(), fieldStats.upperBound());
+      T upper = Conversions.boundFromByteBuffer(ref.type(), fieldStats.upperBound());
       cmp = lit.comparator().compare(upper, lit.value());
       if (cmp < 0) {
         return ROWS_CANNOT_MATCH;
@@ -294,8 +294,8 @@ public class ManifestEvaluator {
         return ROWS_MIGHT_MATCH;
       }
 
-      T lower = Conversions.fromByteBuffer(ref.type(), fieldStats.lowerBound());
-      T upper = Conversions.fromByteBuffer(ref.type(), fieldStats.upperBound());
+      T lower = Conversions.boundFromByteBuffer(ref.type(), fieldStats.lowerBound());
+      T upper = Conversions.boundFromByteBuffer(ref.type(), fieldStats.upperBound());
 
       // rows might match if any literal falls within the manifest's [lower, upper] bounds
       for (T literal : literals) {
@@ -434,8 +434,8 @@ public class ManifestEvaluator {
         return null;
       }
 
-      T lower = Conversions.fromByteBuffer(ref.type(), lowerBound);
-      T upper = Conversions.fromByteBuffer(ref.type(), upperBound);
+      T lower = Conversions.boundFromByteBuffer(ref.type(), lowerBound);
+      T upper = Conversions.boundFromByteBuffer(ref.type(), upperBound);
 
       if (ref.comparator().compare(lower, upper) != 0) {
         return null;

@@ -183,7 +183,7 @@ public class MetricsUtil {
               (file, field) ->
                   file.lowerBounds() == null
                       ? null
-                      : Conversions.fromByteBuffer(
+                      : Conversions.boundFromByteBuffer(
                           field.type(), file.lowerBounds().get(field.fieldId()))),
           new ReadableMetricColDefinition(
               "upper_bound",
@@ -193,7 +193,7 @@ public class MetricsUtil {
               (file, field) ->
                   file.upperBounds() == null
                       ? null
-                      : Conversions.fromByteBuffer(
+                      : Conversions.boundFromByteBuffer(
                           field.type(), file.upperBounds().get(field.fieldId()))));
 
   public static final String READABLE_METRICS = "readable_metrics";
