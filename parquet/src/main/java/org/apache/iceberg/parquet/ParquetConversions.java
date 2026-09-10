@@ -24,9 +24,13 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.function.Function;
+import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.types.Type;
+import org.apache.iceberg.types.Types;
+import org.apache.iceberg.util.DateTimeUtil;
 import org.apache.iceberg.util.UUIDUtil;
 import org.apache.parquet.io.api.Binary;
+import org.apache.parquet.schema.LogicalTypeAnnotation.DateLogicalTypeAnnotation;
 import org.apache.parquet.schema.LogicalTypeAnnotation.DecimalLogicalTypeAnnotation;
 import org.apache.parquet.schema.PrimitiveType;
 
@@ -74,6 +78,21 @@ class ParquetConversions {
 
   static Function<Object, Object> converterFromParquet(
       PrimitiveType parquetType, Type icebergType) {
+    return converterFromParquet(parquetType, icebergType, false);
+  }
+
+  /**
+   * Like {@link #converterFromParquet(PrimitiveType, Type)}, but saturates dates that overflow the
+   * target timestamp type instead of throwing. Intended for column statistics bounds, which may
+   * conservatively enclose the actual values.
+   */
+  static Function<Object, Object> boundsConverterFromParquet(
+      PrimitiveType parquetType, Type icebergType) {
+    return converterFromParquet(parquetType, icebergType, true);
+  }
+
+  private static Function<Object, Object> converterFromParquet(
+      PrimitiveType parquetType, Type icebergType, boolean isBound) {
     Function<Object, Object> fromParquet = converterFromParquet(parquetType);
     if (icebergType != null) {
       if (icebergType.typeId() == Type.TypeID.LONG
@@ -84,6 +103,24 @@ class ParquetConversions {
         return value -> ((Float) fromParquet.apply(value)).doubleValue();
       } else if (icebergType.typeId() == Type.TypeID.UUID) {
         return binary -> UUIDUtil.convert(((Binary) binary).toByteBuffer());
+      } else if (parquetType.getLogicalTypeAnnotation() instanceof DateLogicalTypeAnnotation) {
+        if (icebergType.typeId() == Type.TypeID.TIMESTAMP) {
+          Preconditions.checkArgument(
+              !((Types.TimestampType) icebergType).shouldAdjustToUTC(),
+              "Cannot promote date to %s",
+              icebergType);
+          return isBound
+              ? value -> DateTimeUtil.microsFromDaysClamped((Integer) value)
+              : value -> DateTimeUtil.microsFromDays((Integer) value);
+        } else if (icebergType.typeId() == Type.TypeID.TIMESTAMP_NANO) {
+          Preconditions.checkArgument(
+              !((Types.TimestampNanoType) icebergType).shouldAdjustToUTC(),
+              "Cannot promote date to %s",
+              icebergType);
+          return isBound
+              ? value -> DateTimeUtil.nanosFromDaysClamped((Integer) value)
+              : value -> DateTimeUtil.nanosFromDays((Integer) value);
+        }
       }
     }
 

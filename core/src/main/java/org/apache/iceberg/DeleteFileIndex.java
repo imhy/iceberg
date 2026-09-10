@@ -328,12 +328,12 @@ class DeleteFileIndex {
     Type.PrimitiveType type = field.type().asPrimitiveType();
     Comparator<T> comparator = Comparators.forType(type);
 
-    T dataLower = Conversions.fromByteBuffer(type, dataLowerBuf);
+    T dataLower = Conversions.boundFromByteBuffer(type, dataLowerBuf);
     if (comparator.compare(dataLower, deleteUpper) > 0) {
       return false;
     }
 
-    T dataUpper = Conversions.fromByteBuffer(type, dataUpperBuf);
+    T dataUpper = Conversions.boundFromByteBuffer(type, dataUpperBuf);
     if (comparator.compare(deleteLower, dataUpper) > 0) {
       return false;
     }
@@ -963,7 +963,7 @@ class DeleteFileIndex {
           if (type.isPrimitiveType()) {
             ByteBuffer bound = bounds.get(id);
             if (bound != null) {
-              converted.put(id, Conversions.fromByteBuffer(type, bound));
+              converted.put(id, Conversions.boundFromByteBuffer(type, bound));
             }
           }
         }

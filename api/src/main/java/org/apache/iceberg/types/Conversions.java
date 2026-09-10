@@ -32,6 +32,8 @@ import java.util.UUID;
 import org.apache.iceberg.exceptions.RuntimeIOException;
 import org.apache.iceberg.expressions.Literal;
 import org.apache.iceberg.geospatial.GeospatialBound;
+import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
+import org.apache.iceberg.util.DateTimeUtil;
 import org.apache.iceberg.util.UUIDUtil;
 import org.apache.iceberg.variants.Variant;
 import org.apache.iceberg.variants.VariantMetadata;
@@ -148,10 +150,20 @@ public class Conversions {
 
   @SuppressWarnings("unchecked")
   public static <T> T fromByteBuffer(Type type, ByteBuffer buffer) {
-    return (T) internalFromByteBuffer(type, buffer);
+    return (T) internalFromByteBuffer(type, buffer, false);
   }
 
-  private static Object internalFromByteBuffer(Type type, ByteBuffer buffer) {
+  /**
+   * Like {@link #fromByteBuffer(Type, ByteBuffer)}, but saturates dates that overflow the target
+   * timestamp type instead of throwing. Intended for lower and upper bounds, which may
+   * conservatively enclose the actual values.
+   */
+  @SuppressWarnings("unchecked")
+  public static <T> T boundFromByteBuffer(Type type, ByteBuffer buffer) {
+    return (T) internalFromByteBuffer(type, buffer, true);
+  }
+
+  private static Object internalFromByteBuffer(Type type, ByteBuffer buffer, boolean isBound) {
     if (buffer == null) {
       return null;
     }
@@ -170,11 +182,31 @@ public class Conversions {
         return tmp.getInt();
       case LONG:
       case TIME:
-      case TIMESTAMP:
-      case TIMESTAMP_NANO:
         if (tmp.remaining() < 8) {
           // type was later promoted to long
           return (long) tmp.getInt();
+        }
+        return tmp.getLong();
+      case TIMESTAMP:
+        if (tmp.remaining() == Integer.BYTES) {
+          Preconditions.checkArgument(
+              !((Types.TimestampType) type).shouldAdjustToUTC(),
+              "Cannot promote date bound to %s",
+              type);
+          return isBound
+              ? DateTimeUtil.microsFromDaysClamped(tmp.getInt())
+              : DateTimeUtil.microsFromDays(tmp.getInt());
+        }
+        return tmp.getLong();
+      case TIMESTAMP_NANO:
+        if (tmp.remaining() == Integer.BYTES) {
+          Preconditions.checkArgument(
+              !((Types.TimestampNanoType) type).shouldAdjustToUTC(),
+              "Cannot promote date bound to %s",
+              type);
+          return isBound
+              ? DateTimeUtil.nanosFromDaysClamped(tmp.getInt())
+              : DateTimeUtil.nanosFromDays(tmp.getInt());
         }
         return tmp.getLong();
       case FLOAT:

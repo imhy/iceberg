@@ -99,7 +99,7 @@ public class ParquetMetricsRowGroupFilter {
           Type icebergType = schema.findType(id);
           stats.put(id, col.getStatistics());
           valueCounts.put(id, col.getValueCount());
-          conversions.put(id, ParquetConversions.converterFromParquet(colType, icebergType));
+          conversions.put(id, ParquetConversions.boundsConverterFromParquet(colType, icebergType));
         }
       }
 

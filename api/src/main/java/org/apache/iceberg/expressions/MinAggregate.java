@@ -57,7 +57,7 @@ public class MinAggregate<T> extends ValueAggregate<T> {
 
   @Override
   protected Object evaluateRef(DataFile file) {
-    return Conversions.fromByteBuffer(type, safeGet(file.lowerBounds(), fieldId));
+    return Conversions.boundFromByteBuffer(type, safeGet(file.lowerBounds(), fieldId));
   }
 
   @Override
