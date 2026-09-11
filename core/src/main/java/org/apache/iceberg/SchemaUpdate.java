@@ -283,7 +283,9 @@ class SchemaUpdate implements UpdateSchema {
     }
 
     Preconditions.checkArgument(
-        TypeUtil.isPromotionAllowed(field.type(), newType),
+        base != null
+            ? TypeUtil.isPromotionAllowed(base.formatVersion(), field.type(), newType)
+            : TypeUtil.isPromotionAllowed(field.type(), newType),
         "Cannot change column type: %s: %s -> %s",
         name,
         field.type(),
@@ -291,8 +293,7 @@ class SchemaUpdate implements UpdateSchema {
 
     // merge with a rename, if present
     int fieldId = field.fieldId();
-    Types.NestedField newField = Types.NestedField.from(field).ofType(newType).build();
-    updates.put(fieldId, newField);
+    updates.put(fieldId, TypePromotions.promote(base, name, field, newType));
 
     return this;
   }

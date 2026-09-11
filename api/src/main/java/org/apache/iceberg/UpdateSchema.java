@@ -469,7 +469,10 @@ public interface UpdateSchema extends PendingUpdate<Schema> {
    *
    * <p>The name is used to find the column to update using {@link Schema#findField(String)}.
    *
-   * <p>Only updates that widen types are allowed.
+   * <p>Only supported type promotions are allowed. In format v3 and later, date columns may be
+   * promoted to microsecond or nanosecond timestamps without time zone, provided partition values
+   * and sort order are preserved. Defaults are converted to midnight in the target type. Values
+   * outside the target type's range fail when converted.
    *
    * <p>Columns may be updated and renamed in the same schema update.
    *
@@ -487,7 +490,8 @@ public interface UpdateSchema extends PendingUpdate<Schema> {
    *
    * <p>The name is used to find the column to update using {@link Schema#findField(String)}.
    *
-   * <p>Only updates that widen types are allowed.
+   * <p>Only type promotions supported by {@link #updateColumn(String, Type.PrimitiveType)} are
+   * allowed.
    *
    * <p>Columns may be updated and renamed in the same schema update.
    *

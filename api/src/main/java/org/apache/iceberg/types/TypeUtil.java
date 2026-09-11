@@ -42,6 +42,8 @@ import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 public class TypeUtil {
 
   private static final int HEADER_SIZE = 12;
+  private static final int MIN_FORMAT_VERSION = 1;
+  private static final int DATE_TO_TIMESTAMP_MIN_FORMAT_VERSION = 3;
 
   private TypeUtil() {}
 
@@ -468,7 +470,18 @@ public class TypeUtil {
     return visit(type, new FindTypeVisitor(predicate));
   }
 
-  public static boolean isPromotionAllowed(Type from, Type.PrimitiveType to) {
+  /**
+   * Returns whether a supported type promotion is allowed in the given table format version.
+   *
+   * <p>Callers must also validate that the table format version is supported by the implementation
+   * and that the promotion is compatible with the table's partition specs and sort orders.
+   *
+   * @throws IllegalArgumentException if the format version is not positive
+   */
+  public static boolean isPromotionAllowed(int formatVersion, Type from, Type.PrimitiveType to) {
+    Preconditions.checkArgument(
+        formatVersion >= MIN_FORMAT_VERSION, "Invalid format version: %s", formatVersion);
+
     // Warning! Before changing this function, make sure that the type change doesn't introduce
     // compatibility problems in partitioning.
     if (from.equals(to)) {
@@ -482,6 +495,10 @@ public class TypeUtil {
       case FLOAT:
         return to.typeId() == Type.TypeID.DOUBLE;
 
+      case DATE:
+        return formatVersion >= DATE_TO_TIMESTAMP_MIN_FORMAT_VERSION
+            && isDateToTimestampPromotion(from, to);
+
       case DECIMAL:
         Types.DecimalType fromDecimal = (Types.DecimalType) from;
         if (to.typeId() != Type.TypeID.DECIMAL) {
@@ -494,6 +511,22 @@ public class TypeUtil {
     }
 
     return false;
+  }
+
+  /**
+   * Returns whether the types describe a date-to-timestamp promotion without a time zone.
+   *
+   * <p>This does not check the table format version or partition and sort compatibility.
+   */
+  public static boolean isDateToTimestampPromotion(Type from, Type.PrimitiveType to) {
+    return from.typeId() == Type.TypeID.DATE
+        && (Types.TimestampType.withoutZone().equals(to)
+            || Types.TimestampNanoType.withoutZone().equals(to));
+  }
+
+  /** Returns whether a type promotion is allowed by the format v1/v2 rules. */
+  public static boolean isPromotionAllowed(Type from, Type.PrimitiveType to) {
+    return isPromotionAllowed(MIN_FORMAT_VERSION, from, to);
   }
 
   /**
