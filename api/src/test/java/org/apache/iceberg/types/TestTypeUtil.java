@@ -37,8 +37,78 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 public class TestTypeUtil {
+  private static Stream<Arguments> dateToTimestampPromotions() {
+    return Stream.of(
+        Arguments.of(Types.DateType.get(), Types.TimestampType.withoutZone(), true),
+        Arguments.of(Types.DateType.get(), Types.TimestampNanoType.withoutZone(), true),
+        Arguments.of(Types.DateType.get(), Types.TimestampType.withZone(), false),
+        Arguments.of(Types.DateType.get(), Types.TimestampNanoType.withZone(), false),
+        Arguments.of(Types.DateType.get(), Types.LongType.get(), false),
+        Arguments.of(Types.LongType.get(), Types.TimestampType.withoutZone(), false),
+        Arguments.of(
+            Types.TimestampType.withoutZone(), Types.TimestampNanoType.withoutZone(), false),
+        Arguments.of(
+            Types.StructType.of(optional(1, "d", Types.DateType.get())),
+            Types.TimestampType.withoutZone(),
+            false));
+  }
+
+  @ParameterizedTest
+  @MethodSource("dateToTimestampPromotions")
+  void dateToTimestampPromotion(Type from, Type.PrimitiveType to, boolean allowedInV3) {
+    assertThat(TypeUtil.isDateToTimestampPromotion(from, to)).isEqualTo(allowedInV3);
+    assertThat(TypeUtil.isPromotionAllowed(from, to)).isFalse();
+    assertThat(TypeUtil.isPromotionAllowed(1, from, to)).isFalse();
+    assertThat(TypeUtil.isPromotionAllowed(2, from, to)).isFalse();
+    assertThat(TypeUtil.isPromotionAllowed(3, from, to)).isEqualTo(allowedInV3);
+    assertThat(TypeUtil.isPromotionAllowed(4, from, to)).isEqualTo(allowedInV3);
+    assertThat(TypeUtil.isPromotionAllowed(5, from, to)).isEqualTo(allowedInV3);
+  }
+
+  private static Stream<Arguments> existingPromotions() {
+    return Stream.of(
+        Arguments.of(Types.DateType.get(), Types.DateType.get(), true),
+        Arguments.of(Types.IntegerType.get(), Types.LongType.get(), true),
+        Arguments.of(Types.LongType.get(), Types.IntegerType.get(), false),
+        Arguments.of(Types.FloatType.get(), Types.DoubleType.get(), true),
+        Arguments.of(Types.DoubleType.get(), Types.FloatType.get(), false),
+        Arguments.of(Types.DecimalType.of(9, 2), Types.DecimalType.of(11, 2), true),
+        Arguments.of(Types.DecimalType.of(11, 2), Types.DecimalType.of(9, 2), false),
+        Arguments.of(Types.DecimalType.of(9, 2), Types.DecimalType.of(11, 3), false));
+  }
+
+  @ParameterizedTest
+  @MethodSource("existingPromotions")
+  void existingPromotionRules(Type from, Type.PrimitiveType to, boolean allowed) {
+    assertThat(TypeUtil.isDateToTimestampPromotion(from, to)).isFalse();
+    assertThat(TypeUtil.isPromotionAllowed(from, to)).isEqualTo(allowed);
+    for (int version : new int[] {1, 2, 3, 4, 5}) {
+      assertThat(TypeUtil.isPromotionAllowed(version, from, to))
+          .as("Promotion from %s to %s in v%s", from, to, version)
+          .isEqualTo(allowed);
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(ints = {Integer.MIN_VALUE, -1, 0})
+  void rejectsInvalidPromotionFormatVersion(int formatVersion) {
+    assertThatThrownBy(
+            () ->
+                TypeUtil.isPromotionAllowed(
+                    formatVersion, Types.IntegerType.get(), Types.LongType.get()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Invalid format version: %s", formatVersion);
+    assertThatThrownBy(
+            () ->
+                TypeUtil.isPromotionAllowed(
+                    formatVersion, Types.DateType.get(), Types.DateType.get()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Invalid format version: %s", formatVersion);
+  }
+
   @Test
   public void testReassignIdsDuplicateColumns() {
     Schema schema =
