@@ -102,8 +102,14 @@ public class TestExpressionToSearchArgument {
     SearchArgument expected =
         SearchArgumentFactory.newBuilder()
             .startAnd()
+            .startOr()
+            .isNull("`int`", Type.LONG)
             .lessThan("`int`", Type.LONG, 1L)
+            .end()
+            .startOr()
+            .isNull("`long`", Type.LONG)
             .lessThanEquals("`long`", Type.LONG, 100L)
+            .end()
             .startNot()
             .lessThanEquals("`float`", Type.FLOAT, 5.0)
             .end()
@@ -490,7 +496,10 @@ public class TestExpressionToSearchArgument {
             .startAnd()
             // Drops struct.long
             .equals("`struct`.`int_r2`", Type.LONG, 1L)
+            .startOr()
+            .isNull("`list`.`_elem`", Type.LONG)
             .lessThanEquals("`list`.`_elem`", Type.LONG, 5L)
+            .end()
             // Drops map
             .equals("`newMap_r5`.`_key`", Type.STRING, "country")
             // Drops listOfStruct.long
@@ -501,7 +510,10 @@ public class TestExpressionToSearchArgument {
             .equals("`listOfPeople`.`_elem`.`name`", Type.STRING, "Bob")
             .end()
             .end()
+            .startOr()
+            .isNull("`listOfPeople`.`_elem`.`age_r14`", Type.LONG)
             .lessThan("`listOfPeople`.`_elem`.`age_r14`", Type.LONG, 30L)
+            .end()
             .end()
             .build();
 
