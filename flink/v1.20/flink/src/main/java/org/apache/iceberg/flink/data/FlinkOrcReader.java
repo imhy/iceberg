@@ -90,6 +90,11 @@ public class FlinkOrcReader implements OrcRowReader<RowData> {
 
     @Override
     public OrcValueReader<?> primitive(Type.PrimitiveType iPrimitive, TypeDescription primitive) {
+      if (primitive.getCategory() == TypeDescription.Category.DATE
+          && (iPrimitive instanceof Types.TimestampType
+              || iPrimitive instanceof Types.TimestampNanoType)) {
+        return FlinkOrcReaders.datesAsTimestamps(iPrimitive);
+      }
       switch (iPrimitive.typeId()) {
         case BOOLEAN:
           return OrcValueReaders.booleans();
