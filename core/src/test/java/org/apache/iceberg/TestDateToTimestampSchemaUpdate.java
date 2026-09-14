@@ -464,6 +464,172 @@ class TestDateToTimestampSchemaUpdate {
     assertThat(result.writeDefault()).isEqualTo(unitsPerDay(target));
   }
 
+  static Stream<Arguments> unionVersionsAndTargets() {
+    return Stream.concat(
+        Stream.of(1, 2).map(v -> Arguments.of(v, Types.TimestampType.withoutZone())),
+        Stream.of(3, 4).flatMap(v -> targets().map(t -> Arguments.of(v, t))));
+  }
+
+  @ParameterizedTest
+  @MethodSource("unionVersionsAndTargets")
+  void reverseUnionHonorsFormatVersion(int version, Type.PrimitiveType target) {
+    Schema original = new Schema(Types.NestedField.optional(1, "d", target));
+    Table table = create(original, PartitionSpec.unpartitioned(), version);
+    if (version < 3) {
+      assertThatThrownBy(() -> table.updateSchema().unionByNameWith(DATE_SCHEMA))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("Cannot change column type");
+    } else {
+      table.updateSchema().unionByNameWith(DATE_SCHEMA).commit();
+      assertThat(reload(table).schema().asStruct()).isEqualTo(original.asStruct());
+    }
+    assertThatThrownBy(() -> table.updateSchema().updateColumn("d", Types.DateType.get()))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @ParameterizedTest
+  @MethodSource("targets")
+  void reverseUnionConvertsIncomingDefaults(Type.PrimitiveType target) {
+    Schema original =
+        new Schema(
+            Types.NestedField.optional("d")
+                .withId(1)
+                .ofType(target)
+                .withInitialDefault(Literal.of(-86_400_000_000L).to(target))
+                .withWriteDefault(Literal.of(0L).to(target))
+                .build());
+    Table table = create(original, PartitionSpec.unpartitioned(), 3);
+    Schema incoming =
+        new Schema(
+            Types.NestedField.optional("D")
+                .withId(99)
+                .ofType(Types.DateType.get())
+                .withInitialDefault(date(10))
+                .withWriteDefault(date(1))
+                .build());
+    table.updateSchema().caseSensitive(false).unionByNameWith(incoming).commit();
+    Types.NestedField result = reload(table).schema().findField("d");
+    assertThat(result.type()).isEqualTo(target);
+    assertThat(result.fieldId()).isEqualTo(1);
+    assertThat(result.initialDefault()).isEqualTo(-unitsPerDay(target));
+    assertThat(result.writeDefault()).isEqualTo(unitsPerDay(target));
+    // Repeating the union preserves the converted value.
+    table.updateSchema().caseSensitive(false).unionByNameWith(incoming).commit();
+    assertThat(reload(table).schema().findField("d")).isEqualTo(result);
+  }
+
+  @ParameterizedTest
+  @MethodSource("targets")
+  void reverseUnionChecksIncomingDefaultRange(Type.PrimitiveType target) {
+    long units = unitsPerDay(target);
+    for (int day :
+        new int[] {
+          (int) (Long.MIN_VALUE / units),
+          (int) (Long.MAX_VALUE / units),
+          (int) (Long.MIN_VALUE / units) - 1,
+          (int) (Long.MAX_VALUE / units) + 1
+        }) {
+      Schema original = new Schema(Types.NestedField.optional(1, "d", target));
+      Table table =
+          TestTables.create(
+              new File(temp, "union-" + day),
+              "union-" + day,
+              original,
+              PartitionSpec.unpartitioned(),
+              3);
+      Schema incoming =
+          new Schema(
+              Types.NestedField.optional("d")
+                  .withId(1)
+                  .ofType(Types.DateType.get())
+                  .withWriteDefault(date(day))
+                  .build());
+      UpdateSchema update = table.updateSchema();
+      if (day < Long.MIN_VALUE / units || day > Long.MAX_VALUE / units) {
+        assertThatThrownBy(() -> update.unionByNameWith(incoming))
+            .isInstanceOf(ArithmeticException.class);
+        assertThat(reload(table).schema().asStruct()).isEqualTo(original.asStruct());
+      } else {
+        update.unionByNameWith(incoming).commit();
+        assertThat(reload(table).schema().findField("d").writeDefault()).isEqualTo(day * units);
+      }
+    }
+  }
+
+  @ParameterizedTest
+  @MethodSource("targets")
+  void unionsNestedDatesInBothDirections(Type.PrimitiveType target) {
+    Schema original = unionNestedSchema(Types.DateType.get(), date(0));
+    Table table = create(original, PartitionSpec.unpartitioned(), 3);
+    table
+        .updateSchema()
+        .unionByNameWith(unionNestedSchema(target, Literal.of(2 * 86_400_000_000L).to(target)))
+        .commit();
+    table.updateSchema().unionByNameWith(unionNestedSchema(Types.DateType.get(), date(1))).commit();
+    Schema result = reload(table).schema();
+    assertThat(result.findType("s.d")).isEqualTo(target);
+    assertThat(result.findType("s.dates.element")).isEqualTo(target);
+    assertThat(result.findType("s.by_name.value")).isEqualTo(target);
+    assertThat(result.findType("s.by_name.key")).isEqualTo(Types.StringType.get());
+    assertThat(result.findField("s.d").initialDefault()).isEqualTo(-unitsPerDay(target));
+    assertThat(result.findField("s.d").writeDefault()).isEqualTo(unitsPerDay(target));
+  }
+
+  @ParameterizedTest
+  @MethodSource("targets")
+  void reverseUnionRejectsZonedTargets(Type.PrimitiveType target) {
+    Type.PrimitiveType zoned =
+        target instanceof Types.TimestampNanoType
+            ? Types.TimestampNanoType.withZone()
+            : Types.TimestampType.withZone();
+    Schema original = new Schema(Types.NestedField.optional(1, "d", zoned));
+    Table table = create(original, PartitionSpec.unpartitioned(), 3);
+    assertThatThrownBy(() -> table.updateSchema().unionByNameWith(DATE_SCHEMA))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Cannot change column type");
+    assertThat(reload(table).schema().asStruct()).isEqualTo(original.asStruct());
+  }
+
+  private static Schema unionNestedSchema(Type.PrimitiveType type, Literal<?> writeDefault) {
+    Literal<?> initial =
+        type.equals(Types.DateType.get()) ? date(-1) : Literal.of(-86_400_000_000L).to(type);
+    return new Schema(
+        Types.NestedField.optional(
+            1,
+            "s",
+            Types.StructType.of(
+                Types.NestedField.optional("d")
+                    .withId(2)
+                    .ofType(type)
+                    .withInitialDefault(initial)
+                    .withWriteDefault(writeDefault)
+                    .build(),
+                Types.NestedField.optional(3, "dates", Types.ListType.ofOptional(4, type)),
+                Types.NestedField.optional(
+                    5, "by_name", Types.MapType.ofOptional(6, 7, Types.StringType.get(), type)))));
+  }
+
+  @ParameterizedTest
+  @MethodSource("targets")
+  void reverseUnionUsesTransactionVersion(Type.PrimitiveType target) {
+    Table table = create(DATE_SCHEMA, PartitionSpec.unpartitioned(), 2);
+    Transaction tx = table.newTransaction();
+    tx.updateProperties().set(TableProperties.FORMAT_VERSION, "3").commit();
+    tx.updateSchema().updateColumn("d", target).commit();
+    Schema incoming =
+        new Schema(
+            Types.NestedField.optional("d")
+                .withId(1)
+                .ofType(Types.DateType.get())
+                .withWriteDefault(date(1))
+                .build());
+    tx.updateSchema().unionByNameWith(incoming).commit();
+    assertThat(table.schema().findType("d")).isEqualTo(Types.DateType.get());
+    tx.commitTransaction();
+    assertThat(reload(table).schema().findType("d")).isEqualTo(target);
+    assertThat(table.schema().findField("d").writeDefault()).isEqualTo(unitsPerDay(target));
+  }
+
   @ParameterizedTest
   @MethodSource("targets")
   void transactionCannotReplayAcrossIncompatiblePartitionChange(Type.PrimitiveType target) {
