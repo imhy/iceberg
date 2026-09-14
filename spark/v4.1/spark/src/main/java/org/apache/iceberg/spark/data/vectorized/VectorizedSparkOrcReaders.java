@@ -27,6 +27,7 @@ import org.apache.iceberg.orc.OrcBatchReader;
 import org.apache.iceberg.orc.OrcSchemaWithTypeVisitor;
 import org.apache.iceberg.orc.OrcValueReader;
 import org.apache.iceberg.orc.OrcValueReaders;
+import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.spark.SparkSchemaUtil;
 import org.apache.iceberg.spark.data.SparkOrcValueReaders;
@@ -128,9 +129,20 @@ public class VectorizedSparkOrcReaders {
           // Iceberg does not have a byte type. Use int
         case SHORT:
           // Iceberg does not have a short type. Use int
-        case DATE:
         case INT:
           primitiveValueReader = OrcValueReaders.ints();
+          break;
+        case DATE:
+          if (iPrimitive instanceof Types.TimestampType
+              || iPrimitive instanceof Types.TimestampNanoType) {
+            Preconditions.checkArgument(
+                Types.TimestampType.withoutZone().equals(iPrimitive),
+                "Cannot promote date to Spark type %s",
+                iPrimitive);
+            primitiveValueReader = OrcValueReaders.datesAsTimestamps(iPrimitive);
+          } else {
+            primitiveValueReader = OrcValueReaders.ints();
+          }
           break;
         case LONG:
           primitiveValueReader = OrcValueReaders.longs();
