@@ -69,6 +69,7 @@ import org.apache.iceberg.Schema;
 import org.apache.iceberg.SerializableTable;
 import org.apache.iceberg.SortOrder;
 import org.apache.iceberg.Table;
+import org.apache.iceberg.TableUtil;
 import org.apache.iceberg.flink.FlinkSchemaUtil;
 import org.apache.iceberg.flink.FlinkWriteConf;
 import org.apache.iceberg.flink.FlinkWriteOptions;
@@ -834,8 +835,8 @@ public class IcebergSink
           flinkWriteConf.uidSuffix(),
           SinkUtil.writeProperties(flinkWriteConf.dataFileFormat(), flinkWriteConf, table),
           resolvedSchema != null
-              ? toFlinkRowType(table.schema(), resolvedSchema)
-              : toFlinkRowType(table.schema(), tableSchema),
+              ? toFlinkRowType(TableUtil.formatVersion(table), table.schema(), resolvedSchema)
+              : toFlinkRowType(TableUtil.formatVersion(table), table.schema(), tableSchema),
           tableSupplier,
           flinkWriteConf,
           equalityFieldIds,
@@ -927,16 +928,17 @@ public class IcebergSink
   /**
    * Clean up after removing {@link Builder#tableSchema}
    *
-   * @deprecated since 1.10.0, will be removed in 2.0.0. Use {@link #toFlinkRowType(Schema,
+   * @deprecated since 1.10.0, will be removed in 2.0.0. Use {@link #toFlinkRowType(int, Schema,
    *     ResolvedSchema)} instead.
    */
   @Deprecated
-  private static RowType toFlinkRowType(Schema schema, TableSchema requestedSchema) {
+  private static RowType toFlinkRowType(
+      int formatVersion, Schema schema, TableSchema requestedSchema) {
     if (requestedSchema != null) {
       // Convert the flink schema to iceberg schema firstly, then reassign ids to match the existing
       // iceberg schema.
       Schema writeSchema = TypeUtil.reassignIds(FlinkSchemaUtil.convert(requestedSchema), schema);
-      TypeUtil.validateWriteSchema(schema, writeSchema, true, true);
+      TypeUtil.validateWriteSchema(formatVersion, schema, writeSchema, true, true);
 
       // We use this flink schema to read values from RowData. The flink's TINYINT and SMALLINT will
       // be promoted to iceberg INTEGER, that means if we use iceberg's table schema to read TINYINT
@@ -948,12 +950,13 @@ public class IcebergSink
     }
   }
 
-  private static RowType toFlinkRowType(Schema schema, ResolvedSchema requestedSchema) {
+  private static RowType toFlinkRowType(
+      int formatVersion, Schema schema, ResolvedSchema requestedSchema) {
     if (requestedSchema != null) {
       // Convert the flink schema to iceberg schema firstly, then reassign ids to match the existing
       // iceberg schema.
       Schema writeSchema = TypeUtil.reassignIds(FlinkSchemaUtil.convert(requestedSchema), schema);
-      TypeUtil.validateWriteSchema(schema, writeSchema, true, true);
+      TypeUtil.validateWriteSchema(formatVersion, schema, writeSchema, true, true);
 
       // We use this flink schema to read values from RowData. The flink's TINYINT and SMALLINT will
       // be promoted to iceberg INTEGER, that means if we use iceberg's table schema to read TINYINT
