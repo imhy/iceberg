@@ -213,15 +213,23 @@ class TestDateToTimestampEvolution {
     assertRows(table, Expressions.isNull("d"), (Object) null);
   }
 
+  static Stream<Arguments> defaultFormats() {
+    return targets()
+        .flatMap(
+            target ->
+                Stream.of(FileFormat.PARQUET, FileFormat.ORC)
+                    .map(format -> Arguments.of(target, format)));
+  }
+
   @ParameterizedTest
-  @MethodSource("targets")
-  void convertedInitialDefaultReadsFilesMissingTheField(Type.PrimitiveType target)
-      throws IOException {
+  @MethodSource("defaultFormats")
+  void convertedInitialDefaultReadsFilesMissingTheField(
+      Type.PrimitiveType target, FileFormat format) throws IOException {
     Schema schema = new Schema(Types.NestedField.optional(1, "id", Types.LongType.get()));
     Table table =
         TestTables.create(
             new File(temp, "table"), "test", schema, PartitionSpec.unpartitioned(), 3);
-    table.newAppend().appendFile(write(table, "missing", false, null, 42L)).commit();
+    table.newAppend().appendFile(write(table, format, "missing", false, null, 42L)).commit();
     table
         .updateSchema()
         .addColumn(
@@ -231,6 +239,24 @@ class TestDateToTimestampEvolution {
     reload(table);
     LocalDateTime midnight = LocalDate.ofEpochDay(1).atStartOfDay();
     assertRows(table, Expressions.equal("d", midnight.toString()), midnight);
+    table
+        .updateSchema()
+        .updateColumnDefault("d", Literal.of(midnight.plusDays(1).toString()).to(target))
+        .commit();
+    table.newAppend().appendFile(write(table, format, "explicit-null", false, null, 43L)).commit();
+    assertRows(table, Expressions.equal("d", midnight.toString()), midnight);
+    assertRows(table, Expressions.equal("d", midnight.plusDays(1).toString()));
+    assertRows(table, Expressions.isNull("d"), (Object) null);
+    assertRows(
+        table,
+        Expressions.or(Expressions.equal("d", midnight.toString()), Expressions.isNull("d")),
+        midnight,
+        null);
+    assertRows(
+        table,
+        Expressions.and(Expressions.equal("d", midnight.toString()), Expressions.equal("id", 42L)),
+        midnight);
+    assertRows(table, Expressions.not(Expressions.equal("d", midnight.toString())), (Object) null);
   }
 
   @ParameterizedTest

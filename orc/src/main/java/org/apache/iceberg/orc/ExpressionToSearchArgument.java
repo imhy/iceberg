@@ -33,6 +33,7 @@ import org.apache.iceberg.expressions.ExpressionVisitors;
 import org.apache.iceberg.expressions.Expressions;
 import org.apache.iceberg.expressions.Literal;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableSet;
+import org.apache.iceberg.relocated.com.google.common.collect.Sets;
 import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.Type.TypeID;
 import org.apache.iceberg.types.TypeUtil;
@@ -56,7 +57,8 @@ class ExpressionToSearchArgument
     // Negating a SQL comparison directly can discard null rows that Iceberg's Evaluator retains.
     ExpressionVisitors.visit(
             Expressions.rewriteNot(expr),
-            new ExpressionToSearchArgument(builder, idToColumnName, physicalSchema))
+            new ExpressionToSearchArgument(
+                builder, idToColumnName, physicalSchema, defaultFieldIds(readSchema)))
         .invoke();
     return builder.build();
   }
@@ -70,12 +72,35 @@ class ExpressionToSearchArgument
   private final SearchArgument.Builder builder;
   private final Map<Integer, String> idToColumnName;
   private final Schema physicalSchema;
+  private final Set<Integer> defaultFieldIds;
 
   private ExpressionToSearchArgument(
-      SearchArgument.Builder builder, Map<Integer, String> idToColumnName, Schema physicalSchema) {
+      SearchArgument.Builder builder,
+      Map<Integer, String> idToColumnName,
+      Schema physicalSchema,
+      Set<Integer> defaultFieldIds) {
     this.builder = builder;
     this.idToColumnName = idToColumnName;
     this.physicalSchema = physicalSchema;
+    this.defaultFieldIds = defaultFieldIds;
+  }
+
+  private static Set<Integer> defaultFieldIds(TypeDescription schema) {
+    Set<Integer> ids = Sets.newHashSet();
+    collectDefaultFieldIds(schema, ids);
+    return ids;
+  }
+
+  private static void collectDefaultFieldIds(TypeDescription type, Set<Integer> ids) {
+    if (Boolean.parseBoolean(
+        type.getAttributeValue(ORCSchemaUtil.ICEBERG_INITIAL_DEFAULT_ATTRIBUTE))) {
+      ids.add(ORCSchemaUtil.fieldId(type));
+    }
+    if (type.getChildren() != null) {
+      for (TypeDescription child : type.getChildren()) {
+        collectDefaultFieldIds(child, ids);
+      }
+    }
   }
 
   @Override
@@ -299,6 +324,9 @@ class ExpressionToSearchArgument
       // Cannot push down predicates for types which cannot be represented in PredicateLeaf.Type, so
       // return
       // TruthValue.YES_NO_NULL which signifies that this predicate cannot help with filtering
+      return () -> this.builder.literal(TruthValue.YES_NO_NULL);
+    } else if (defaultFieldIds.contains(pred.ref().fieldId())) {
+      // ORC sees a missing column as null, while the residual reads its non-null initial default.
       return () -> this.builder.literal(TruthValue.YES_NO_NULL);
     } else if (physicalSchema.findType(pred.ref().fieldId()) != null
         && TypeUtil.isDateToTimestampPromotion(
