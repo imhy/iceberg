@@ -1,0 +1,331 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+package org.apache.iceberg.spark.source;
+
+import java.io.IOException;
+import java.util.Arrays;
+import java.util.List;
+import java.util.function.Function;
+import org.apache.iceberg.MetadataColumns;
+import org.apache.iceberg.Schema;
+import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
+import org.apache.iceberg.relocated.com.google.common.collect.Lists;
+import org.apache.iceberg.spark.functions.DateToTimestampNtzFunction.DateToTimestampNtz;
+import org.apache.iceberg.types.Type;
+import org.apache.iceberg.types.TypeUtil;
+import org.apache.iceberg.types.Types;
+import org.apache.spark.sql.catalyst.InternalRow;
+import org.apache.spark.sql.catalyst.util.ArrayBasedMapData;
+import org.apache.spark.sql.catalyst.util.ArrayData;
+import org.apache.spark.sql.catalyst.util.GenericArrayData;
+import org.apache.spark.sql.catalyst.util.MapData;
+import org.apache.spark.sql.connector.distributions.ClusteredDistribution;
+import org.apache.spark.sql.connector.distributions.Distribution;
+import org.apache.spark.sql.connector.distributions.Distributions;
+import org.apache.spark.sql.connector.distributions.OrderedDistribution;
+import org.apache.spark.sql.connector.expressions.Expression;
+import org.apache.spark.sql.connector.expressions.Expressions;
+import org.apache.spark.sql.connector.expressions.NamedReference;
+import org.apache.spark.sql.connector.expressions.SortOrder;
+import org.apache.spark.sql.connector.expressions.Transform;
+import org.apache.spark.sql.connector.metric.CustomTaskMetric;
+import org.apache.spark.sql.connector.write.DataWriter;
+import org.apache.spark.sql.connector.write.WriterCommitMessage;
+import org.apache.spark.sql.types.ArrayType;
+import org.apache.spark.sql.types.DataType;
+import org.apache.spark.sql.types.DataTypes;
+import org.apache.spark.sql.types.MapType;
+import org.apache.spark.sql.types.StructField;
+import org.apache.spark.sql.types.StructType;
+
+/** Keeps raw input conversion consistent with write partitioning and ordering. */
+final class SparkTypePromotion {
+  private SparkTypePromotion() {}
+
+  static StructType writeType(StructType sparkType, Schema input, Schema target) {
+    return (StructType) promoteType(sparkType, input.asStruct(), target.asStruct());
+  }
+
+  private static DataType promoteType(DataType sparkType, Type input, Type target) {
+    if (target == null) {
+      return sparkType;
+    }
+    if (input.isPrimitiveType()
+        && target.isPrimitiveType()
+        && TypeUtil.isDateToTimestampPromotion(input, target.asPrimitiveType())) {
+      if (!Types.TimestampType.withoutZone().equals(target)) {
+        throw new UnsupportedOperationException("Spark does not support timestamp_ns");
+      }
+      return DataTypes.TimestampNTZType;
+    }
+    if (sparkType instanceof StructType struct && target.isStructType()) {
+      return promoteStruct(struct, input.asStructType(), target.asStructType());
+    } else if (sparkType instanceof ArrayType array && target.isListType()) {
+      return DataTypes.createArrayType(
+          promoteType(
+              array.elementType(),
+              input.asListType().elementType(),
+              target.asListType().elementType()),
+          array.containsNull());
+    } else if (sparkType instanceof MapType map && target.isMapType()) {
+      return DataTypes.createMapType(
+          promoteType(map.keyType(), input.asMapType().keyType(), target.asMapType().keyType()),
+          promoteType(
+              map.valueType(), input.asMapType().valueType(), target.asMapType().valueType()),
+          map.valueContainsNull());
+    }
+    return sparkType;
+  }
+
+  private static StructType promoteStruct(
+      StructType struct, Types.StructType input, Types.StructType target) {
+    Preconditions.checkArgument(
+        struct.fields().length == input.fields().size(),
+        "Spark input schema does not match Iceberg field count: %s != %s",
+        struct.fields().length,
+        input.fields().size());
+    StructField[] fields = struct.fields().clone();
+    for (int i = 0; i < fields.length; i++) {
+      Types.NestedField from = input.fields().get(i);
+      Types.NestedField to = target.field(from.fieldId());
+      StructField field = fields[i];
+      fields[i] =
+          new StructField(
+              field.name(),
+              promoteType(field.dataType(), from.type(), to == null ? null : to.type()),
+              field.nullable(),
+              field.metadata());
+    }
+    return new StructType(fields);
+  }
+
+  static Distribution distribution(Distribution distribution, Schema input, Schema target) {
+    if (distribution instanceof ClusteredDistribution clustered) {
+      return Distributions.clustered(
+          Arrays.stream(clustered.clustering())
+              .map(expr -> expression(expr, input, target))
+              .toArray(Expression[]::new));
+    } else if (distribution instanceof OrderedDistribution ordered) {
+      return Distributions.ordered(ordering(ordered.ordering(), input, target));
+    }
+    return distribution;
+  }
+
+  static SortOrder[] ordering(SortOrder[] ordering, Schema input, Schema target) {
+    return Arrays.stream(ordering)
+        .map(
+            order ->
+                Expressions.sort(
+                    expression(order.expression(), input, target),
+                    order.direction(),
+                    order.nullOrdering()))
+        .toArray(SortOrder[]::new);
+  }
+
+  private static Expression expression(Expression expr, Schema input, Schema target) {
+    if (input == null) {
+      return expr;
+    }
+    if (expr instanceof NamedReference ref) {
+      return promoteReference(ref, input, target);
+    } else if (expr instanceof Transform transform) {
+      Expression[] args = transform.arguments();
+      Expression[] promoted =
+          Arrays.stream(args).map(arg -> expression(arg, input, target)).toArray(Expression[]::new);
+      if (!Arrays.equals(args, promoted)) {
+        if (transform.name().equals("identity")) {
+          return promoted[0];
+        }
+        // Spark interprets "bucket" arguments as column references before binding functions.
+        // Use the scalar alias when an argument includes a conversion expression.
+        String name = transform.name().equals("bucket") ? "iceberg_bucket" : transform.name();
+        return Expressions.apply(name, promoted);
+      }
+    }
+    return expr;
+  }
+
+  private static Expression promoteReference(NamedReference ref, Schema input, Schema target) {
+    Type type = target.asStruct();
+    Types.NestedField field = null;
+    for (String name : ref.fieldNames()) {
+      if (!type.isStructType()) {
+        return ref;
+      }
+      field = type.asStructType().field(name);
+      if (field == null) {
+        return ref;
+      }
+      type = field.type();
+    }
+    Type source = field == null ? null : input.findType(field.fieldId());
+    if (source != null
+        && type.isPrimitiveType()
+        && TypeUtil.isDateToTimestampPromotion(source, type.asPrimitiveType())) {
+      return Expressions.apply("date_to_timestamp_ntz", ref);
+    }
+    return ref;
+  }
+
+  static DataWriter<InternalRow> wrap(
+      DataWriter<InternalRow> writer, StructType source, StructType target) {
+    if (source.equals(target)) {
+      return writer;
+    }
+    Function<InternalRow, InternalRow> convert = rowConverter(source, target);
+    return new DataWriter<>() {
+      @Override
+      public void write(InternalRow row) throws IOException {
+        writer.write(convert.apply(row));
+      }
+
+      @Override
+      public void write(InternalRow metadata, InternalRow row) throws IOException {
+        writer.write(metadata, convert.apply(row));
+      }
+
+      @Override
+      public WriterCommitMessage commit() throws IOException {
+        return writer.commit();
+      }
+
+      @Override
+      public void abort() throws IOException {
+        writer.abort();
+      }
+
+      @Override
+      public void close() throws IOException {
+        writer.close();
+      }
+
+      @Override
+      public CustomTaskMetric[] currentMetricsValues() {
+        return writer.currentMetricsValues();
+      }
+    };
+  }
+
+  static Function<InternalRow, InternalRow> rowConverter(StructType source, StructType target) {
+    if (source.equals(target)) {
+      return Function.identity();
+    }
+    Function<Object, Object> convert = converter(source, target);
+    int size = source.fields().length;
+    if (hasRowLineage(source) && hasRowLineage(target)) {
+      // Metadata-aware writers append lineage after converting the data row. Some rewrite
+      // callers already supply a complete row, so prepare both supported layouts once.
+      StructType dataSource = new StructType(Arrays.copyOf(source.fields(), size - 2));
+      StructType dataTarget = new StructType(Arrays.copyOf(target.fields(), size - 2));
+      Function<Object, Object> convertData = converter(dataSource, dataTarget);
+      return row -> {
+        InternalRow snapshot = row.copy();
+        return (InternalRow)
+            (snapshot.numFields() == size - 2
+                ? convertData.apply(snapshot)
+                : convert.apply(snapshot));
+      };
+    }
+    // Nested views share this owned snapshot; copy reused input only once at the root.
+    return row -> (InternalRow) convert.apply(row == null ? null : row.copy());
+  }
+
+  private static boolean hasRowLineage(StructType type) {
+    StructField[] fields = type.fields();
+    return fields.length >= 2
+        && fields[fields.length - 2].name().equals(MetadataColumns.ROW_ID.name())
+        && fields[fields.length - 1]
+            .name()
+            .equals(MetadataColumns.LAST_UPDATED_SEQUENCE_NUMBER.name());
+  }
+
+  private static Function<Object, Object> converter(DataType source, DataType target) {
+    if (source.equals(target)) {
+      return Function.identity();
+    }
+    Function<Object, Object> convert;
+    if (DataTypes.DateType.equals(source) && DataTypes.TimestampNTZType.equals(target)) {
+      convert = value -> DateToTimestampNtz.invoke((Integer) value);
+    } else if (source instanceof StructType from && target instanceof StructType to) {
+      convert = structConverter(from, to);
+    } else if (source instanceof ArrayType from && target instanceof ArrayType to) {
+      Function<Object, Object> element = converter(from.elementType(), to.elementType());
+      convert = value -> convertArray((ArrayData) value, from.elementType(), element);
+    } else if (source instanceof MapType from && target instanceof MapType to) {
+      Function<Object, Object> key = converter(from.keyType(), to.keyType());
+      Function<Object, Object> mapValue = converter(from.valueType(), to.valueType());
+      convert =
+          value -> {
+            MapData map = (MapData) value;
+            return new ArrayBasedMapData(
+                convertArray(map.keyArray(), from.keyType(), key),
+                convertArray(map.valueArray(), from.valueType(), mapValue));
+          };
+    } else {
+      throw new IllegalArgumentException("Cannot promote input type: " + source);
+    }
+    return value -> value == null ? null : convert.apply(value);
+  }
+
+  private static Function<Object, Object> structConverter(StructType from, StructType to) {
+    Preconditions.checkArgument(
+        from.fields().length == to.fields().length,
+        "Cannot promote structs with different field counts: %s != %s",
+        from.fields().length,
+        to.fields().length);
+    StructField[] fields = from.fields();
+    int[] positions = new int[fields.length];
+    Arrays.fill(positions, -1);
+    List<Integer> changed = Lists.newArrayList();
+    List<Function<Object, Object>> conversions = Lists.newArrayList();
+    for (int i = 0; i < fields.length; i++) {
+      if (!fields[i].dataType().equals(to.fields()[i].dataType())) {
+        positions[i] = changed.size();
+        changed.add(i);
+        conversions.add(converter(fields[i].dataType(), to.fields()[i].dataType()));
+      }
+    }
+    return value -> {
+      InternalRow row = (InternalRow) value;
+      Preconditions.checkArgument(
+          row.numFields() == fields.length,
+          "Input row does not match the schema field count: %s != %s",
+          row.numFields(),
+          fields.length);
+      Object[] values = new Object[changed.size()];
+      for (int i = 0; i < values.length; i++) {
+        int pos = changed.get(i);
+        values[i] =
+            conversions
+                .get(i)
+                .apply(row.isNullAt(pos) ? null : row.get(pos, fields[pos].dataType()));
+      }
+      return new PromotedInternalRow(row, to.fields(), positions, values);
+    };
+  }
+
+  private static ArrayData convertArray(
+      ArrayData array, DataType type, Function<Object, Object> convert) {
+    Object[] result = new Object[array.numElements()];
+    for (int i = 0; i < result.length; i++) {
+      result[i] = convert.apply(array.isNullAt(i) ? null : array.get(i, type));
+    }
+    return new GenericArrayData(result);
+  }
+}
