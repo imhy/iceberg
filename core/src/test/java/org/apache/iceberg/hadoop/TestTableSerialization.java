@@ -20,6 +20,8 @@ package org.apache.iceberg.hadoop;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.AdditionalAnswers.delegatesTo;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -58,6 +60,37 @@ import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 public class TestTableSerialization extends HadoopTableTestBase {
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void preservesResolvedWrapperVersion(boolean serialized) throws Exception {
+    Table wrapper = mock(Table.class, delegatesTo(table));
+    if (serialized) {
+      wrapper = SerializableTable.copyOf(wrapper);
+    }
+    int version = TableUtil.formatVersion(table);
+    SerializableTable resolved = new TableWithFormatVersion(wrapper, version);
+    assertThat(resolved.io()).isSameAs(wrapper.io());
+    Table copied = SerializableTable.copyOf(resolved);
+    assertThat(TableUtil.formatVersion(TestHelpers.roundTripSerialize(copied))).isEqualTo(version);
+    assertThatThrownBy(() -> ((SerializableTable) copied).metadataFileLocation())
+        .isInstanceOf(UnsupportedOperationException.class)
+        .hasMessage("org.apache.iceberg.SerializableTable does not have a metadata file location");
+  }
+
+  @ParameterizedTest
+  @ValueSource(ints = {0, -2})
+  void rejectsInvalidResolvedVersion(int version) {
+    assertThatThrownBy(() -> new TableWithFormatVersion(table, version))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Invalid format version: %s", version);
+  }
+
+  private static class TableWithFormatVersion extends SerializableTable {
+    private TableWithFormatVersion(Table table, int formatVersion) {
+      super(table, formatVersion);
+    }
+  }
 
   @Test
   public void testSerializableTable() throws IOException, ClassNotFoundException {
