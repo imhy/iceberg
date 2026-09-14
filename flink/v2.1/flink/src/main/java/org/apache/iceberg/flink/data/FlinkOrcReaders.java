@@ -38,7 +38,9 @@ import org.apache.iceberg.orc.OrcValueReaders;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
+import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.Types;
+import org.apache.iceberg.util.DateTimeUtil;
 import org.apache.orc.TypeDescription;
 import org.apache.orc.storage.ql.exec.vector.BytesColumnVector;
 import org.apache.orc.storage.ql.exec.vector.ColumnVector;
@@ -54,6 +56,17 @@ class FlinkOrcReaders {
 
   static OrcValueReader<StringData> strings() {
     return StringReader.INSTANCE;
+  }
+
+  static OrcValueReader<TimestampData> datesAsTimestamps(Type.PrimitiveType target) {
+    OrcValueReader<Long> reader = OrcValueReaders.datesAsTimestamps(target);
+    return target instanceof Types.TimestampNanoType
+        ? (vector, row) ->
+            TimestampData.fromLocalDateTime(
+                DateTimeUtil.timestampFromNanos(reader.nonNullRead(vector, row)))
+        : (vector, row) ->
+            TimestampData.fromLocalDateTime(
+                DateTimeUtil.timestampFromMicros(reader.nonNullRead(vector, row)));
   }
 
   static OrcValueReader<Integer> dates() {
