@@ -68,6 +68,7 @@ import org.apache.iceberg.Schema;
 import org.apache.iceberg.SerializableTable;
 import org.apache.iceberg.SortOrder;
 import org.apache.iceberg.Table;
+import org.apache.iceberg.TableUtil;
 import org.apache.iceberg.flink.FlinkSchemaUtil;
 import org.apache.iceberg.flink.FlinkWriteConf;
 import org.apache.iceberg.flink.FlinkWriteOptions;
@@ -351,7 +352,7 @@ public class IcebergSink
     private TableSchema tableSchema;
 
     private ResolvedSchema resolvedSchema;
-    private SerializableTable table;
+    private Table table;
     private final Map<String, String> writeOptions = Maps.newHashMap();
     private final Map<String, String> snapshotSummary = Maps.newHashMap();
     private ReadableConfig readableConfig = new Configuration();
@@ -413,17 +414,16 @@ public class IcebergSink
     }
 
     /**
-     * This iceberg {@link SerializableTable} instance is used for initializing {@link
-     * IcebergStreamWriter} which will write all the records into {@link DataFile}s and emit them to
-     * downstream operator. Providing a table would avoid so many table loading from each separate
-     * task.
+     * This iceberg {@link Table} instance is used for initializing {@link IcebergStreamWriter}
+     * which will write all the records into {@link DataFile}s and emit them to downstream operator.
+     * Providing a table would avoid so many table loading from each separate task.
      *
      * @param newTable the loaded iceberg table instance.
      * @return {@link IcebergSink.Builder} to connect the iceberg table.
      */
     @Override
     public Builder table(Table newTable) {
-      this.table = (SerializableTable) SerializableTable.copyOf(newTable);
+      this.table = newTable;
       return this;
     }
 
@@ -765,7 +765,8 @@ public class IcebergSink
       Duration tableRefreshInterval = flinkWriteConf.tableRefreshInterval();
       SerializableSupplier<Table> tableSupplier;
       if (tableRefreshInterval != null) {
-        tableSupplier = new CachingTableSupplier(table, tableLoader(), tableRefreshInterval);
+        tableSupplier =
+            new CachingTableSupplier(serializableTable, tableLoader(), tableRefreshInterval);
       } else {
         tableSupplier = () -> serializableTable;
       }
@@ -834,8 +835,8 @@ public class IcebergSink
           flinkWriteConf.uidSuffix(),
           SinkUtil.writeProperties(flinkWriteConf.dataFileFormat(), flinkWriteConf, table),
           resolvedSchema != null
-              ? toFlinkRowType(table.schema(), resolvedSchema)
-              : toFlinkRowType(table.schema(), tableSchema),
+              ? toFlinkRowType(TableUtil.formatVersion(table), table.schema(), resolvedSchema)
+              : toFlinkRowType(TableUtil.formatVersion(table), table.schema(), tableSchema),
           tableSupplier,
           flinkWriteConf,
           equalityFieldIds,
@@ -914,29 +915,30 @@ public class IcebergSink
       }
 
       try (TableLoader loader = tableLoader) {
-        return (SerializableTable) SerializableTable.copyOf(loader.loadTable());
+        return SinkUtil.serializableTable(loader.loadTable(), tableLoader);
       } catch (IOException e) {
         throw new UncheckedIOException(
             "Failed to load iceberg table from table loader: " + tableLoader, e);
       }
     }
 
-    return (SerializableTable) SerializableTable.copyOf(table);
+    return SinkUtil.serializableTable(table, tableLoader);
   }
 
   /**
    * Clean up after removing {@link Builder#tableSchema}
    *
-   * @deprecated since 1.10.0, will be removed in 2.0.0. Use {@link #toFlinkRowType(Schema,
+   * @deprecated since 1.10.0, will be removed in 2.0.0. Use {@link #toFlinkRowType(int, Schema,
    *     ResolvedSchema)} instead.
    */
   @Deprecated
-  private static RowType toFlinkRowType(Schema schema, TableSchema requestedSchema) {
+  private static RowType toFlinkRowType(
+      int formatVersion, Schema schema, TableSchema requestedSchema) {
     if (requestedSchema != null) {
       // Convert the flink schema to iceberg schema firstly, then reassign ids to match the existing
       // iceberg schema.
       Schema writeSchema = TypeUtil.reassignIds(FlinkSchemaUtil.convert(requestedSchema), schema);
-      TypeUtil.validateWriteSchema(schema, writeSchema, true, true);
+      TypeUtil.validateWriteSchema(formatVersion, schema, writeSchema, true, true);
 
       // We use this flink schema to read values from RowData. The flink's TINYINT and SMALLINT will
       // be promoted to iceberg INTEGER, that means if we use iceberg's table schema to read TINYINT
@@ -948,12 +950,13 @@ public class IcebergSink
     }
   }
 
-  private static RowType toFlinkRowType(Schema schema, ResolvedSchema requestedSchema) {
+  private static RowType toFlinkRowType(
+      int formatVersion, Schema schema, ResolvedSchema requestedSchema) {
     if (requestedSchema != null) {
       // Convert the flink schema to iceberg schema firstly, then reassign ids to match the existing
       // iceberg schema.
       Schema writeSchema = TypeUtil.reassignIds(FlinkSchemaUtil.convert(requestedSchema), schema);
-      TypeUtil.validateWriteSchema(schema, writeSchema, true, true);
+      TypeUtil.validateWriteSchema(formatVersion, schema, writeSchema, true, true);
 
       // We use this flink schema to read values from RowData. The flink's TINYINT and SMALLINT will
       // be promoted to iceberg INTEGER, that means if we use iceberg's table schema to read TINYINT

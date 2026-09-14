@@ -25,6 +25,7 @@ import java.util.UUID;
 import org.apache.iceberg.encryption.EncryptionManager;
 import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.io.LocationProvider;
+import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.util.SerializableMap;
@@ -74,6 +75,15 @@ public class SerializableTable implements Table, HasTableOperations, Serializabl
   private transient volatile Map<Integer, SortOrder> lazySortOrders = null;
 
   protected SerializableTable(Table table) {
+    this(table, UNKNOWN_FORMAT_VERSION);
+  }
+
+  /** Captures a table whose format version has been resolved independently of its wrapper. */
+  protected SerializableTable(Table table, int resolvedFormatVersion) {
+    Preconditions.checkArgument(
+        resolvedFormatVersion == UNKNOWN_FORMAT_VERSION || resolvedFormatVersion > 0,
+        "Invalid format version: %s",
+        resolvedFormatVersion);
     this.name = table.name();
     this.location = table.location();
     this.metadataFileLocation = metadataFileLocation(table);
@@ -94,7 +104,10 @@ public class SerializableTable implements Table, HasTableOperations, Serializabl
     this.locationProviderTry = Try.of(table::locationProvider);
     this.refs = SerializableMap.copyOf(table.refs());
     this.uuid = table.uuid();
-    this.formatVersion = formatVersion(table);
+    this.formatVersion =
+        resolvedFormatVersion == UNKNOWN_FORMAT_VERSION
+            ? formatVersion(table)
+            : resolvedFormatVersion;
   }
 
   /**
@@ -120,7 +133,9 @@ public class SerializableTable implements Table, HasTableOperations, Serializabl
   }
 
   private String metadataFileLocation(Table table) {
-    if (table instanceof HasTableOperations) {
+    if (table instanceof SerializableTable serialized) {
+      return serialized.metadataFileLocation;
+    } else if (table instanceof HasTableOperations) {
       TableOperations ops = ((HasTableOperations) table).operations();
       return ops.current().metadataFileLocation();
     } else if (table instanceof BaseMetadataTable) {
