@@ -24,6 +24,7 @@ import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.util.Map;
 import java.util.Set;
+import org.apache.iceberg.Schema;
 import org.apache.iceberg.expressions.Bound;
 import org.apache.iceberg.expressions.BoundPredicate;
 import org.apache.iceberg.expressions.BoundReference;
@@ -33,6 +34,7 @@ import org.apache.iceberg.expressions.Literal;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableSet;
 import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.Type.TypeID;
+import org.apache.iceberg.types.TypeUtil;
 import org.apache.iceberg.util.DateTimeUtil;
 import org.apache.orc.TypeDescription;
 import org.apache.orc.storage.common.type.HiveDecimal;
@@ -46,10 +48,11 @@ class ExpressionToSearchArgument
     extends ExpressionVisitors.BoundVisitor<ExpressionToSearchArgument.Action> {
 
   static SearchArgument convert(Expression expr, TypeDescription readSchema) {
-    Map<Integer, String> idToColumnName =
-        ORCSchemaUtil.idToOrcName(ORCSchemaUtil.convert(readSchema));
+    Schema physicalSchema = ORCSchemaUtil.convert(readSchema);
+    Map<Integer, String> idToColumnName = ORCSchemaUtil.idToOrcName(physicalSchema);
     SearchArgument.Builder builder = SearchArgumentFactory.newBuilder();
-    ExpressionVisitors.visit(expr, new ExpressionToSearchArgument(builder, idToColumnName))
+    ExpressionVisitors.visit(
+            expr, new ExpressionToSearchArgument(builder, idToColumnName, physicalSchema))
         .invoke();
     return builder.build();
   }
@@ -62,11 +65,13 @@ class ExpressionToSearchArgument
 
   private final SearchArgument.Builder builder;
   private final Map<Integer, String> idToColumnName;
+  private final Schema physicalSchema;
 
   private ExpressionToSearchArgument(
-      SearchArgument.Builder builder, Map<Integer, String> idToColumnName) {
+      SearchArgument.Builder builder, Map<Integer, String> idToColumnName, Schema physicalSchema) {
     this.builder = builder;
     this.idToColumnName = idToColumnName;
+    this.physicalSchema = physicalSchema;
   }
 
   @Override
@@ -276,6 +281,12 @@ class ExpressionToSearchArgument
       // Cannot push down predicates for types which cannot be represented in PredicateLeaf.Type, so
       // return
       // TruthValue.YES_NO_NULL which signifies that this predicate cannot help with filtering
+      return () -> this.builder.literal(TruthValue.YES_NO_NULL);
+    } else if (physicalSchema.findType(pred.ref().fieldId()) != null
+        && TypeUtil.isDateToTimestampPromotion(
+            physicalSchema.findType(pred.ref().fieldId()), pred.ref().type().asPrimitiveType())) {
+      // Timestamp literals do not describe the physical DATE statistics. Preserve all possible
+      // outcomes, including beneath NOT and OR, and let the residual filter evaluate promoted rows.
       return () -> this.builder.literal(TruthValue.YES_NO_NULL);
     } else {
       return super.predicate(pred);

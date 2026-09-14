@@ -136,6 +136,10 @@ public class GenericOrcReader implements OrcRowReader<Record> {
         case DOUBLE:
           return OrcValueReaders.doubles();
         case DATE:
+          if (iPrimitive instanceof Types.TimestampType
+              || iPrimitive instanceof Types.TimestampNanoType) {
+            return GenericOrcReaders.datesAsTimestamps(iPrimitive);
+          }
           return GenericOrcReaders.dates();
         case TIMESTAMP:
           return GenericOrcReaders.timestamps();

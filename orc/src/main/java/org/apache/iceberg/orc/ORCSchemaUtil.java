@@ -388,7 +388,10 @@ public final class ORCSchemaUtil {
             orcType = promotedType.get();
           } else {
             Preconditions.checkArgument(
-                isSameType(originalType, type),
+                isSameType(originalType, type)
+                    || (originalType.getCategory() == TypeDescription.Category.DATE
+                        && TypeUtil.isDateToTimestampPromotion(
+                            Types.DateType.get(), type.asPrimitiveType())),
                 "Can not promote %s type to %s",
                 originalType.getCategory(),
                 type.typeId().name());
