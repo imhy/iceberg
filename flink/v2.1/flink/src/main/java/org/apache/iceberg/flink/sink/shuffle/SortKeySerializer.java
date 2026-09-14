@@ -311,6 +311,7 @@ class SortKeySerializer extends TypeSerializer<SortKey> {
 
   public static class SortKeySerializerSnapshot implements TypeSerializerSnapshot<SortKey> {
     private static final int CURRENT_VERSION = 2;
+    private static final int LEGACY_FORMAT_VERSION = 1;
 
     private Schema schema;
     private SortOrder sortOrder;
@@ -382,8 +383,10 @@ class SortKeySerializer extends TypeSerializer<SortKey> {
       Schema sortSchema = TypeUtil.project(schema, sortFieldIds);
       Schema oldSortSchema = TypeUtil.project(oldSnapshot.schema, sortFieldIds);
 
+      // Serializer snapshots have no table version and retain legacy promotion rules.
       List<String> compatibilityErrors =
-          CheckCompatibility.writeCompatibilityErrors(sortSchema, oldSortSchema);
+          CheckCompatibility.writeCompatibilityErrors(
+              LEGACY_FORMAT_VERSION, sortSchema, oldSortSchema);
       if (compatibilityErrors.isEmpty()) {
         return TypeSerializerSchemaCompatibility.compatibleAsIs();
       }

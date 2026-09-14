@@ -25,6 +25,7 @@ import static org.apache.iceberg.flink.sink.shuffle.Fixtures.SORT_ORDER;
 import static org.assertj.core.api.AssertionsForClassTypes.assertThat;
 
 import java.io.IOException;
+import java.util.List;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.api.common.typeutils.TypeSerializerSchemaCompatibility;
 import org.apache.flink.api.common.typeutils.TypeSerializerSnapshot;
@@ -39,6 +40,7 @@ import org.apache.iceberg.SortKey;
 import org.apache.iceberg.SortOrder;
 import org.apache.iceberg.StructLike;
 import org.apache.iceberg.flink.RowDataWrapper;
+import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.Types;
 import org.junit.jupiter.api.Test;
 
@@ -93,6 +95,22 @@ public class TestSortKeySerializerSnapshot {
     DataInputDeserializer input = new DataInputDeserializer(serializedBytes);
     SortKey deserialized = restoredSerializer.deserialize(input);
     assertThat(deserialized).isEqualTo(sortKey);
+  }
+
+  @Test
+  void retainsLegacyRulesForDateSortKeySnapshots() throws Exception {
+    Schema dates = new Schema(Types.NestedField.optional(1, "d", Types.DateType.get()));
+    SortOrder dateOrder = SortOrder.builderFor(dates).asc("d").build();
+    SortKeySerializer.SortKeySerializerSnapshot oldSnapshot =
+        roundTrip(new SortKeySerializer.SortKeySerializerSnapshot(dates, dateOrder));
+    for (Type target :
+        List.of(Types.TimestampType.withoutZone(), Types.TimestampNanoType.withoutZone())) {
+      Schema timestamps = new Schema(Types.NestedField.optional(1, "d", target));
+      SortOrder timestampOrder = SortOrder.builderFor(timestamps).asc("d").build();
+      SortKeySerializer.SortKeySerializerSnapshot newSnapshot =
+          roundTrip(new SortKeySerializer.SortKeySerializerSnapshot(timestamps, timestampOrder));
+      assertThat(newSnapshot.resolveSchemaCompatibility(oldSnapshot).isIncompatible()).isTrue();
+    }
   }
 
   @Test
