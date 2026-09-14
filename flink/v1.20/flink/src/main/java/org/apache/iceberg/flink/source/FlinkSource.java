@@ -260,7 +260,9 @@ public class FlinkSource {
       if (projectedSchema == null) {
         contextBuilder.project(icebergSchema);
       } else {
-        contextBuilder.project(FlinkSchemaUtil.convert(icebergSchema, projectedSchema));
+        contextBuilder.project(
+            FlinkReadSchema.withDefaults(
+                icebergSchema, FlinkSchemaUtil.convert(icebergSchema, projectedSchema)));
       }
 
       contextBuilder.exposeLocality(

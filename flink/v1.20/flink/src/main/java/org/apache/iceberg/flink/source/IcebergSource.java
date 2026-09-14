@@ -586,9 +586,13 @@ public class IcebergSource<T> implements Source<T, IcebergSourceSplit, IcebergEn
           flinkConfig.get(FlinkConfigOptions.TABLE_EXEC_ICEBERG_WORKER_POOL_SIZE));
       Schema icebergSchema = table.schema();
       if (projectedFlinkSchema != null) {
-        contextBuilder.project(FlinkSchemaUtil.convert(icebergSchema, projectedFlinkSchema));
+        contextBuilder.project(
+            FlinkReadSchema.withDefaults(
+                icebergSchema, FlinkSchemaUtil.convert(icebergSchema, projectedFlinkSchema)));
       } else if (projectedTableSchema != null) {
-        contextBuilder.project(FlinkSchemaUtil.convert(icebergSchema, projectedTableSchema));
+        contextBuilder.project(
+            FlinkReadSchema.withDefaults(
+                icebergSchema, FlinkSchemaUtil.convert(icebergSchema, projectedTableSchema)));
       }
 
       SerializableRecordEmitter<T> emitter = SerializableRecordEmitter.defaultEmitter();
