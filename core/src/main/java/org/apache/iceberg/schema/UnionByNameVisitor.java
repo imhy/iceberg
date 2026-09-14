@@ -22,10 +22,12 @@ import java.util.List;
 import java.util.stream.IntStream;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.UpdateSchema;
+import org.apache.iceberg.expressions.Literal;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.TypeUtil;
 import org.apache.iceberg.types.Types;
+import org.apache.iceberg.util.DateTimeUtil;
 
 /**
  * Visitor class that accumulates the set of changes needed to evolve an existing schema into the
@@ -33,11 +35,16 @@ import org.apache.iceberg.types.Types;
  */
 public class UnionByNameVisitor extends SchemaWithPartnerVisitor<Integer, Boolean> {
 
+  private static final int LEGACY_FORMAT_VERSION = 1;
+
+  private final int formatVersion;
   private final UpdateSchema api;
   private final Schema partnerSchema;
   private final boolean caseSensitive;
 
-  private UnionByNameVisitor(UpdateSchema api, Schema partnerSchema, boolean caseSensitive) {
+  private UnionByNameVisitor(
+      int formatVersion, UpdateSchema api, Schema partnerSchema, boolean caseSensitive) {
+    this.formatVersion = formatVersion;
     this.api = api;
     this.partnerSchema = partnerSchema;
     this.caseSensitive = caseSensitive;
@@ -46,20 +53,22 @@ public class UnionByNameVisitor extends SchemaWithPartnerVisitor<Integer, Boolea
   /**
    * Adds changes needed to produce a union of two schemas to an {@link UpdateSchema} operation.
    *
-   * <p>Changes are accumulated to evolve the existingSchema into a union with newSchema.
+   * <p>Changes are accumulated to evolve the existingSchema into a union with newSchema using
+   * format v1/v2 promotion rules. Use the format-version overload for table-aware unions.
    *
    * @param api an UpdateSchema for adding changes
    * @param existingSchema an existing schema
    * @param newSchema a new schema to compare with the existing
    */
   public static void visit(UpdateSchema api, Schema existingSchema, Schema newSchema) {
-    visit(api, existingSchema, newSchema, true);
+    visit(LEGACY_FORMAT_VERSION, api, existingSchema, newSchema, true);
   }
 
   /**
    * Adds changes needed to produce a union of two schemas to an {@link UpdateSchema} operation.
    *
-   * <p>Changes are accumulated to evolve the existingSchema into a union with newSchema.
+   * <p>Changes are accumulated to evolve the existingSchema into a union with newSchema using
+   * format v1/v2 promotion rules. Use the format-version overload for table-aware unions.
    *
    * @param api an UpdateSchema for adding changes
    * @param existingSchema an existing schema
@@ -68,10 +77,22 @@ public class UnionByNameVisitor extends SchemaWithPartnerVisitor<Integer, Boolea
    */
   public static void visit(
       UpdateSchema api, Schema existingSchema, Schema newSchema, boolean caseSensitive) {
+    visit(LEGACY_FORMAT_VERSION, api, existingSchema, newSchema, caseSensitive);
+  }
+
+  /** Adds schema union changes using the given table format version's promotion rules. */
+  public static void visit(
+      int formatVersion,
+      UpdateSchema api,
+      Schema existingSchema,
+      Schema newSchema,
+      boolean caseSensitive) {
+    Preconditions.checkArgument(
+        formatVersion >= LEGACY_FORMAT_VERSION, "Invalid format version: %s", formatVersion);
     visit(
         newSchema,
         -1,
-        new UnionByNameVisitor(api, existingSchema, caseSensitive),
+        new UnionByNameVisitor(formatVersion, api, existingSchema, caseSensitive),
         new PartnerIdByNameAccessors(existingSchema, caseSensitive));
   }
 
@@ -174,8 +195,18 @@ public class UnionByNameVisitor extends SchemaWithPartnerVisitor<Integer, Boolea
     boolean needsOptionalUpdate = field.isOptional() && existingField.isRequired();
     boolean needsTypeUpdate = !isIgnorableTypeUpdate(existingField.type(), field.type());
     boolean needsDocUpdate = field.doc() != null && !field.doc().equals(existingField.doc());
+    Literal<?> writeDefault = field.writeDefaultLiteral();
+    if (!needsTypeUpdate
+        && writeDefault != null
+        && existingField.type().isPrimitiveType()
+        && TypeUtil.isDateToTimestampPromotion(
+            field.type(), existingField.type().asPrimitiveType())) {
+      // The incoming DATE keeps the table's wider type, so its default must use that type too.
+      long micros = DateTimeUtil.microsFromDays((Integer) writeDefault.value());
+      writeDefault = Literal.of(micros).to(existingField.type());
+    }
     boolean needsDefaultUpdate =
-        field.writeDefault() != null && !field.writeDefault().equals(existingField.writeDefault());
+        writeDefault != null && !writeDefault.value().equals(existingField.writeDefault());
 
     if (needsOptionalUpdate) {
       api.makeColumnOptional(fullName);
@@ -190,7 +221,7 @@ public class UnionByNameVisitor extends SchemaWithPartnerVisitor<Integer, Boolea
     }
 
     if (needsDefaultUpdate) {
-      api.updateColumnDefault(fullName, field.writeDefaultLiteral());
+      api.updateColumnDefault(fullName, writeDefault);
     }
   }
 
@@ -204,7 +235,7 @@ public class UnionByNameVisitor extends SchemaWithPartnerVisitor<Integer, Boolea
       // existingType:long -> newType:int returns true, meaning it is ignorable
       // existingType:int -> newType:long returns false, meaning it is not ignorable
       return newType.isPrimitiveType()
-          && TypeUtil.isPromotionAllowed(newType, existingType.asPrimitiveType());
+          && TypeUtil.isPromotionAllowed(formatVersion, newType, existingType.asPrimitiveType());
     } else {
       // Complex -> Complex
       return !newType.isPrimitiveType();
