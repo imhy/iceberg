@@ -18,9 +18,8 @@
  */
 package org.apache.iceberg.flink.sink.dynamic;
 
-import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.LocalTime;
+import java.time.temporal.ChronoUnit;
 import java.util.Map;
 import org.apache.flink.table.data.ArrayData;
 import org.apache.flink.table.data.DecimalData;
@@ -35,7 +34,9 @@ import org.apache.flink.table.types.logical.DecimalType;
 import org.apache.flink.table.types.logical.LogicalType;
 import org.apache.flink.table.types.logical.MapType;
 import org.apache.flink.table.types.logical.RowType;
+import org.apache.flink.table.types.logical.TimestampType;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
+import org.apache.iceberg.util.DateTimeUtil;
 
 /**
  * {@link org.apache.iceberg.flink.sink.dynamic.DataConverter} is responsible to change the input
@@ -110,9 +111,15 @@ interface DataConverter {
       case TIMESTAMP_WITHOUT_TIME_ZONE:
         return object -> {
           if (object instanceof Integer) {
-            LocalDateTime dateTime =
-                LocalDateTime.of(LocalDate.ofEpochDay((Integer) object), LocalTime.MIN);
-            return TimestampData.fromLocalDateTime(dateTime);
+            ChronoUnit unit =
+                ((TimestampType) targetType).getPrecision() > 6
+                    ? ChronoUnit.NANOS
+                    : ChronoUnit.MICROS;
+            LocalDateTime epoch = DateTimeUtil.EPOCH.toLocalDateTime();
+            LocalDateTime midnight = DateTimeUtil.dateFromDays((Integer) object).atStartOfDay();
+            // TimestampData has a wider range than Iceberg's signed-long timestamp encoding.
+            long value = unit.between(epoch, midnight);
+            return TimestampData.fromLocalDateTime(epoch.plus(value, unit));
           } else {
             return object;
           }
