@@ -41,6 +41,7 @@ import org.apache.iceberg.parquet.ParquetVariantReaders.DelegatingValueReader;
 import org.apache.iceberg.parquet.ParquetVariantVisitor;
 import org.apache.iceberg.parquet.TypeWithSchemaVisitor;
 import org.apache.iceberg.parquet.VariantReaderBuilder;
+import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
@@ -48,6 +49,7 @@ import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.spark.SparkUtil;
 import org.apache.iceberg.types.Type.TypeID;
 import org.apache.iceberg.types.Types;
+import org.apache.iceberg.util.DateTimeUtil;
 import org.apache.iceberg.util.UUIDUtil;
 import org.apache.iceberg.variants.Variant;
 import org.apache.parquet.column.ColumnDescriptor;
@@ -271,6 +273,16 @@ public class SparkParquetReaders {
               return new UnboxedReader<>(desc);
             }
           case DATE:
+            if (expected != null
+                && (expected.typeId() == TypeID.TIMESTAMP
+                    || expected.typeId() == TypeID.TIMESTAMP_NANO)) {
+              Preconditions.checkArgument(
+                  Types.TimestampType.withoutZone().equals(expected),
+                  "Cannot promote date to Spark type %s",
+                  expected);
+              return new DateAsTimestampReader(desc);
+            }
+            return new UnboxedReader<>(desc);
           case INT_64:
             return new UnboxedReader<>(desc);
           case TIMESTAMP_MICROS:
@@ -380,6 +392,18 @@ public class SparkParquetReaders {
     @Override
     public Decimal read(Decimal ignored) {
       return Decimal.apply(column.nextLong(), precision, scale);
+    }
+  }
+
+  private static class DateAsTimestampReader extends PrimitiveReader<Long> {
+    private DateAsTimestampReader(ColumnDescriptor desc) {
+      super(desc);
+    }
+
+    @Override
+    public Long read(Long reuse) {
+      return DateTimeUtil.microsFromTimestamp(
+          DateTimeUtil.dateFromDays(column.nextInteger()).atStartOfDay());
     }
   }
 

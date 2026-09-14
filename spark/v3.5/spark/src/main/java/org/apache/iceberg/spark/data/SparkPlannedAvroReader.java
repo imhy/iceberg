@@ -31,6 +31,7 @@ import org.apache.iceberg.avro.AvroWithPartnerVisitor;
 import org.apache.iceberg.avro.SupportsRowPosition;
 import org.apache.iceberg.avro.ValueReader;
 import org.apache.iceberg.avro.ValueReaders;
+import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 import org.apache.iceberg.spark.SparkUtil;
 import org.apache.iceberg.types.Type;
@@ -132,7 +133,15 @@ public class SparkPlannedAvroReader implements DatumReader<InternalRow>, Support
       if (logicalType != null) {
         switch (logicalType.getName()) {
           case "date":
-            // Spark uses the same representation
+            if (partner != null
+                && (partner.typeId() == Type.TypeID.TIMESTAMP
+                    || partner.typeId() == Type.TypeID.TIMESTAMP_NANO)) {
+              Preconditions.checkArgument(
+                  Types.TimestampType.withoutZone().equals(partner),
+                  "Cannot promote date to Spark type %s",
+                  partner);
+              return ValueReaders.datesAsTimestamps(partner.asPrimitiveType());
+            }
             return ValueReaders.ints();
 
           case "timestamp-millis":
