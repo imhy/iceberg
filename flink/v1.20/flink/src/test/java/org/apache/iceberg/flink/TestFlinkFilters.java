@@ -26,9 +26,11 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import org.apache.flink.table.api.DataTypes;
 import org.apache.flink.table.api.Expressions;
 import org.apache.flink.table.catalog.Column;
@@ -43,15 +45,23 @@ import org.apache.flink.table.expressions.UnresolvedReferenceExpression;
 import org.apache.flink.table.expressions.ValueLiteralExpression;
 import org.apache.flink.table.expressions.utils.ApiExpressionDefaultVisitor;
 import org.apache.flink.table.functions.BuiltInFunctionDefinitions;
+import org.apache.flink.table.types.DataType;
+import org.apache.iceberg.Schema;
 import org.apache.iceberg.expressions.And;
+import org.apache.iceberg.expressions.Binder;
 import org.apache.iceberg.expressions.BoundLiteralPredicate;
 import org.apache.iceberg.expressions.Not;
 import org.apache.iceberg.expressions.Or;
 import org.apache.iceberg.expressions.UnboundPredicate;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
+import org.apache.iceberg.types.Type;
+import org.apache.iceberg.types.Types;
 import org.apache.iceberg.util.DateTimeUtil;
 import org.apache.iceberg.util.Pair;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 public class TestFlinkFilters {
 
@@ -109,6 +119,52 @@ public class TestFlinkFilters {
 
     Instant instant = Instant.parse("2020-12-23T12:13:14.00Z");
     matchLiteral("field12", instant, DateTimeUtil.microsFromInstant(instant));
+  }
+
+  static Stream<Arguments> timestampModes() {
+    return Stream.of(6, 9)
+        .flatMap(
+            precision ->
+                Stream.of(false, true)
+                    .flatMap(
+                        zoned ->
+                            Stream.of(false, true)
+                                .map(reversed -> Arguments.of(precision, zoned, reversed))));
+  }
+
+  @ParameterizedTest
+  @MethodSource("timestampModes")
+  void preservesTimestampLiteralPrecision(int precision, boolean zoned, boolean reversed) {
+    Type type =
+        precision == 9
+            ? (zoned ? Types.TimestampNanoType.withZone() : Types.TimestampNanoType.withoutZone())
+            : (zoned ? Types.TimestampType.withZone() : Types.TimestampType.withoutZone());
+    Schema schema = new Schema(Types.NestedField.optional(1, "d", type));
+    DataType flinkType =
+        zoned
+            ? DataTypes.TIMESTAMP_WITH_LOCAL_TIME_ZONE(precision)
+            : DataTypes.TIMESTAMP(precision);
+    FieldReferenceExpression field = new FieldReferenceExpression("d", flinkType, 0, 0);
+    for (String text : List.of("1969-12-31T23:59:59", "2021-03-14T01:30:00")) {
+      LocalDateTime dateTime =
+          LocalDateTime.parse(text).withNano(precision == 9 ? 123456789 : 123456000);
+      Object value = zoned ? dateTime.toInstant(ZoneOffset.UTC) : dateTime;
+      ValueLiteralExpression literal = new ValueLiteralExpression(value, flinkType.notNull());
+      CallExpression equals =
+          new CallExpression(
+              BuiltInFunctionDefinitions.EQUALS,
+              reversed ? List.of(literal, field) : List.of(field, literal),
+              DataTypes.BOOLEAN());
+      Optional<org.apache.iceberg.expressions.Expression> converted = FlinkFilters.convert(equals);
+      assertThat(converted).isPresent();
+      BoundLiteralPredicate<?> bound =
+          (BoundLiteralPredicate<?>) Binder.bind(schema.asStruct(), converted.get(), true);
+      long expected =
+          precision == 9
+              ? DateTimeUtil.nanosFromTimestamp(dateTime)
+              : DateTimeUtil.microsFromTimestamp(dateTime);
+      assertThat(bound.literal().value()).isEqualTo(expected);
+    }
   }
 
   @Test

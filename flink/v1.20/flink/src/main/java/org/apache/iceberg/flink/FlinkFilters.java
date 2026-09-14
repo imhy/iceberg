@@ -215,10 +215,9 @@ public class FlinkFilters {
             expression.getOutputDataType().getLogicalType().getDefaultConversion());
     return value.map(
         o -> {
-          if (o instanceof LocalDateTime) {
-            return DateTimeUtil.microsFromTimestamp((LocalDateTime) o);
-          } else if (o instanceof Instant) {
-            return DateTimeUtil.microsFromInstant((Instant) o);
+          if (o instanceof LocalDateTime || o instanceof Instant) {
+            // Bind at the column's precision instead of truncating nano literals to micros.
+            return o.toString();
           } else if (o instanceof LocalTime) {
             return DateTimeUtil.microsFromTime((LocalTime) o);
           } else if (o instanceof LocalDate) {
