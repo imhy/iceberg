@@ -30,6 +30,7 @@ import org.apache.iceberg.orc.OrcValueReaders;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.spark.SparkSchemaUtil;
+import org.apache.iceberg.spark.SparkUtil;
 import org.apache.iceberg.spark.data.SparkOrcValueReaders;
 import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.Types;
@@ -116,6 +117,13 @@ public class VectorizedSparkOrcReaders {
     @Override
     public Converter map(Types.MapType iMap, TypeDescription map, Converter key, Converter value) {
       return new MapConverter(iMap, key, value);
+    }
+
+    @Override
+    public Converter initialDefault(Types.NestedField field) {
+      Object value = SparkUtil.internalToSpark(field.type(), field.initialDefault());
+      return (vector, batchSize, batchOffset, isSelectedInUse, selected) ->
+          new ConstantColumnVector(field.type(), batchSize, value);
     }
 
     @Override

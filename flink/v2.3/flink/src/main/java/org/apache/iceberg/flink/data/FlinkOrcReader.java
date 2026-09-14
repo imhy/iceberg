@@ -89,6 +89,12 @@ public class FlinkOrcReader implements OrcRowReader<RowData> {
     }
 
     @Override
+    public OrcValueReader<?> initialDefault(Types.NestedField field) {
+      return OrcValueReaders.constants(
+          RowDataUtil.convertConstant(field.type(), field.initialDefault()));
+    }
+
+    @Override
     public OrcValueReader<?> primitive(Type.PrimitiveType iPrimitive, TypeDescription primitive) {
       if (primitive.getCategory() == TypeDescription.Category.DATE
           && (iPrimitive instanceof Types.TimestampType

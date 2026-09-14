@@ -188,8 +188,11 @@ public class TestBuildOrcProjection {
                         .withInitialDefault(Literal.of(34L))
                         .build())));
 
-    assertThatThrownBy(() -> ORCSchemaUtil.buildOrcProjection(evolvedSchema, baseOrcSchema))
-        .isInstanceOf(UnsupportedOperationException.class)
-        .hasMessage("ORC cannot read default value for field b.d (long): 34");
+    TypeDescription projection = ORCSchemaUtil.buildOrcProjection(evolvedSchema, baseOrcSchema);
+    TypeDescription field = projection.getChildren().get(1).getChildren().get(1);
+    assertThat(field.getCategory()).isEqualTo(TypeDescription.Category.LONG);
+    assertThat(field.getAttributeValue(ORCSchemaUtil.ICEBERG_INITIAL_DEFAULT_ATTRIBUTE))
+        .isEqualTo("true");
+    assertThat(baseOrcSchema.getChildren().get(1).getChildren()).hasSize(1);
   }
 }
