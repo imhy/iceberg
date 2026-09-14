@@ -35,15 +35,20 @@ import org.apache.iceberg.avro.Avro;
 import org.apache.iceberg.data.GenericRecord;
 import org.apache.iceberg.data.Record;
 import org.apache.iceberg.data.avro.DataWriter;
+import org.apache.iceberg.data.orc.GenericOrcWriter;
 import org.apache.iceberg.data.parquet.GenericParquetWriter;
 import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.io.FileAppender;
 import org.apache.iceberg.io.InputFile;
+import org.apache.iceberg.io.OutputFile;
+import org.apache.iceberg.orc.ORC;
 import org.apache.iceberg.parquet.Parquet;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
+import org.apache.iceberg.spark.data.vectorized.VectorizedSparkOrcReaders;
 import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.Types;
 import org.apache.spark.sql.catalyst.InternalRow;
+import org.apache.spark.sql.vectorized.ColumnarBatch;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -60,29 +65,34 @@ class TestDateToTimestampRead {
             target ->
                 Stream.of(
                     Arguments.of(FileFormat.AVRO, false, target),
+                    Arguments.of(FileFormat.ORC, false, target),
+                    Arguments.of(FileFormat.ORC, true, target),
                     Arguments.of(FileFormat.PARQUET, false, target),
                     Arguments.of(FileFormat.PARQUET, true, target)));
   }
 
   @ParameterizedTest
   @MethodSource("modes")
-  void readsDatesAsTimestamps(FileFormat format, boolean dictionary, Type.PrimitiveType target)
+  void readsDatesAsTimestamps(
+      FileFormat format, boolean vectorizedOrDictionary, Type.PrimitiveType target)
       throws IOException {
     long units = unitsPerDay(target);
     Integer[] days = {
       (int) (Long.MIN_VALUE / units), -1, 0, 1, (int) (Long.MAX_VALUE / units), null
     };
-    InputFile file = write(format, dictionary, days);
+    InputFile file = write(format, vectorizedOrDictionary, days);
     List<Object> expected = Lists.newArrayList();
     for (Integer day : days) {
       expected.add(day == null ? null : day * units);
     }
-    assertThat(read(format, file, schema(target))).containsExactlyElementsOf(expected);
+    assertThat(read(format, vectorizedOrDictionary, file, schema(target)))
+        .containsExactlyElementsOf(expected);
   }
 
   @ParameterizedTest
   @MethodSource("modes")
-  void promotesNestedFields(FileFormat format, boolean dictionary, Type.PrimitiveType target)
+  void promotesNestedFields(
+      FileFormat format, boolean vectorizedOrDictionary, Type.PrimitiveType target)
       throws IOException {
     Schema original = nestedSchema(Types.DateType.get());
     Schema promoted = nestedSchema(target);
@@ -95,29 +105,12 @@ class TestDateToTimestampRead {
     root.set(0, nested);
     File file = new File(temp, "nested." + format);
     FileAppender<Record> writer =
-        format == FileFormat.PARQUET
-            ? Parquet.write(Files.localOutput(file))
-                .schema(original)
-                .set("parquet.enable.dictionary", Boolean.toString(dictionary))
-                .createWriterFunc(GenericParquetWriter::create)
-                .build()
-            : Avro.write(Files.localOutput(file))
-                .schema(original)
-                .createWriterFunc(DataWriter::create)
-                .build();
+        newWriter(format, vectorizedOrDictionary, Files.localOutput(file), original);
     try (writer) {
       writer.add(root);
     }
     CloseableIterable<InternalRow> reader =
-        format == FileFormat.PARQUET
-            ? Parquet.read(Files.localInput(file))
-                .project(promoted)
-                .createReaderFunc(f -> SparkParquetReaders.buildReader(promoted, f))
-                .build()
-            : Avro.read(Files.localInput(file))
-                .project(promoted)
-                .createResolvingReader(SparkPlannedAvroReader::create)
-                .build();
+        newReader(format, vectorizedOrDictionary, Files.localInput(file), promoted);
     Object expected = -unitsPerDay(target);
 
     try (reader) {
@@ -143,23 +136,30 @@ class TestDateToTimestampRead {
 
   @ParameterizedTest
   @MethodSource("modes")
-  void rejectsNanosecondTargets(FileFormat format, boolean dictionary, Type.PrimitiveType target)
+  void rejectsNanosecondTargets(
+      FileFormat format, boolean vectorizedOrDictionary, Type.PrimitiveType target)
       throws IOException {
-    InputFile file = write(format, dictionary, 1);
-    assertThatThrownBy(() -> read(format, file, schema(Types.TimestampNanoType.withoutZone())))
+    InputFile file = write(format, vectorizedOrDictionary, 1);
+    assertThatThrownBy(
+            () ->
+                read(
+                    format,
+                    vectorizedOrDictionary,
+                    file,
+                    schema(Types.TimestampNanoType.withoutZone())))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Cannot promote date to Spark type");
   }
 
   @ParameterizedTest
   @MethodSource("modes")
-  void rejectsOverflow(FileFormat format, boolean dictionary, Type.PrimitiveType target)
+  void rejectsOverflow(FileFormat format, boolean vectorizedOrDictionary, Type.PrimitiveType target)
       throws IOException {
     long units = unitsPerDay(target);
     for (int day :
         new int[] {(int) (Long.MIN_VALUE / units) - 1, (int) (Long.MAX_VALUE / units) + 1}) {
-      InputFile file = write(format, dictionary, day);
-      assertThatThrownBy(() -> read(format, file, schema(target)))
+      InputFile file = write(format, vectorizedOrDictionary, day);
+      assertThatThrownBy(() -> read(format, vectorizedOrDictionary, file, schema(target)))
           .isInstanceOf(ArithmeticException.class)
           .hasMessage("long overflow");
     }
@@ -167,39 +167,36 @@ class TestDateToTimestampRead {
 
   @ParameterizedTest
   @MethodSource("modes")
-  void rejectsZonedTargets(FileFormat format, boolean dictionary, Type.PrimitiveType target)
+  void rejectsZonedTargets(
+      FileFormat format, boolean vectorizedOrDictionary, Type.PrimitiveType target)
       throws IOException {
     Type.PrimitiveType zoned =
         target.typeId() == Type.TypeID.TIMESTAMP
             ? Types.TimestampType.withZone()
             : Types.TimestampNanoType.withZone();
-    InputFile file = write(format, dictionary, 1);
-    assertThatThrownBy(() -> read(format, file, schema(zoned)))
+    InputFile file = write(format, vectorizedOrDictionary, 1);
+    assertThatThrownBy(() -> read(format, vectorizedOrDictionary, file, schema(zoned)))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("Cannot promote date");
+        .hasMessageContaining(
+            format == FileFormat.ORC ? "Can not promote DATE" : "Cannot promote date");
   }
 
   @ParameterizedTest
   @MethodSource("modes")
-  void preservesDateReads(FileFormat format, boolean dictionary, Type.PrimitiveType target)
+  void preservesDateReads(
+      FileFormat format, boolean vectorizedOrDictionary, Type.PrimitiveType target)
       throws IOException {
-    InputFile file = write(format, dictionary, -1, 0, 1, null);
-    assertThat(read(format, file, DATE)).containsExactly(-1, 0, 1, null);
+    InputFile file = write(format, vectorizedOrDictionary, -1, 0, 1, null);
+    assertThat(read(format, vectorizedOrDictionary, file, DATE)).containsExactly(-1, 0, 1, null);
     Schema missing = new Schema(Types.NestedField.optional(2, "missing", target));
-    assertThat(read(format, file, missing)).containsExactly(null, null, null, null);
+    assertThat(read(format, vectorizedOrDictionary, file, missing))
+        .containsExactly(null, null, null, null);
   }
 
-  private List<Object> read(FileFormat format, InputFile file, Schema schema) throws IOException {
-    CloseableIterable<InternalRow> reader =
-        format == FileFormat.PARQUET
-            ? Parquet.read(file)
-                .project(schema)
-                .createReaderFunc(s -> SparkParquetReaders.buildReader(schema, s))
-                .build()
-            : Avro.read(file)
-                .project(schema)
-                .createResolvingReader(SparkPlannedAvroReader::create)
-                .build();
+  private List<Object> read(
+      FileFormat format, boolean vectorizedOrDictionary, InputFile file, Schema schema)
+      throws IOException {
+    CloseableIterable<InternalRow> reader = newReader(format, vectorizedOrDictionary, file, schema);
     List<Object> values = Lists.newArrayList();
     try (reader) {
       for (InternalRow row : reader) {
@@ -214,20 +211,11 @@ class TestDateToTimestampRead {
     return values;
   }
 
-  private InputFile write(FileFormat format, boolean dictionary, Integer... days)
+  private InputFile write(FileFormat format, boolean vectorizedOrDictionary, Integer... days)
       throws IOException {
     File file = new File(temp, "dates-" + fileId++ + "." + format);
     FileAppender<Record> writer =
-        format == FileFormat.PARQUET
-            ? Parquet.write(Files.localOutput(file))
-                .schema(DATE)
-                .set("parquet.enable.dictionary", Boolean.toString(dictionary))
-                .createWriterFunc(GenericParquetWriter::create)
-                .build()
-            : Avro.write(Files.localOutput(file))
-                .schema(DATE)
-                .createWriterFunc(DataWriter::create)
-                .build();
+        newWriter(format, vectorizedOrDictionary, Files.localOutput(file), DATE);
     try (writer) {
       for (Integer day : days) {
         GenericRecord record = GenericRecord.create(DATE);
@@ -236,6 +224,66 @@ class TestDateToTimestampRead {
       }
     }
     return Files.localInput(file);
+  }
+
+  private static CloseableIterable<InternalRow> newReader(
+      FileFormat format, boolean vectorizedOrDictionary, InputFile file, Schema schema)
+      throws IOException {
+    if (format == FileFormat.ORC) {
+      if (vectorizedOrDictionary) {
+        CloseableIterable<ColumnarBatch> batches =
+            ORC.read(file)
+                .project(schema)
+                .recordsPerBatch(2)
+                .createBatchedReaderFunc(
+                    s -> VectorizedSparkOrcReaders.buildReader(schema, s, Map.of()))
+                .build();
+        CloseableIterable<InternalRow> rows =
+            CloseableIterable.concat(
+                CloseableIterable.transform(
+                    batches,
+                    b -> CloseableIterable.withNoopClose((Iterable<InternalRow>) b::rowIterator)));
+        return CloseableIterable.combine(
+            rows,
+            () -> {
+              try (rows;
+                  batches) {
+                // Close both the flattened iterator and its ORC input.
+              }
+            });
+      }
+      return ORC.read(file)
+          .project(schema)
+          .recordsPerBatch(2)
+          .createReaderFunc(s -> new SparkOrcReader(schema, s))
+          .build();
+    } else if (format == FileFormat.PARQUET) {
+      return Parquet.read(file)
+          .project(schema)
+          .createReaderFunc(s -> SparkParquetReaders.buildReader(schema, s))
+          .build();
+    } else {
+      return Avro.read(file)
+          .project(schema)
+          .createResolvingReader(SparkPlannedAvroReader::create)
+          .build();
+    }
+  }
+
+  private static FileAppender<Record> newWriter(
+      FileFormat format, boolean vectorizedOrDictionary, OutputFile file, Schema schema)
+      throws IOException {
+    if (format == FileFormat.ORC) {
+      return ORC.write(file).schema(schema).createWriterFunc(GenericOrcWriter::buildWriter).build();
+    } else if (format == FileFormat.PARQUET) {
+      return Parquet.write(file)
+          .schema(schema)
+          .set("parquet.enable.dictionary", Boolean.toString(vectorizedOrDictionary))
+          .createWriterFunc(GenericParquetWriter::create)
+          .build();
+    } else {
+      return Avro.write(file).schema(schema).createWriterFunc(DataWriter::create).build();
+    }
   }
 
   private static Schema schema(Type type) {

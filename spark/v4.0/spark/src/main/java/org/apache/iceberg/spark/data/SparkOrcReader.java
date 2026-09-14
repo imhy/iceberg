@@ -24,6 +24,7 @@ import org.apache.iceberg.orc.OrcRowReader;
 import org.apache.iceberg.orc.OrcSchemaWithTypeVisitor;
 import org.apache.iceberg.orc.OrcValueReader;
 import org.apache.iceberg.orc.OrcValueReaders;
+import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.Types;
@@ -104,8 +105,17 @@ public class SparkOrcReader implements OrcRowReader<InternalRow> {
           // Iceberg does not have a byte type. Use int
         case SHORT:
           // Iceberg does not have a short type. Use int
-        case DATE:
         case INT:
+          return OrcValueReaders.ints();
+        case DATE:
+          if (iPrimitive instanceof Types.TimestampType
+              || iPrimitive instanceof Types.TimestampNanoType) {
+            Preconditions.checkArgument(
+                Types.TimestampType.withoutZone().equals(iPrimitive),
+                "Cannot promote date to Spark type %s",
+                iPrimitive);
+            return OrcValueReaders.datesAsTimestamps(iPrimitive);
+          }
           return OrcValueReaders.ints();
         case LONG:
           return OrcValueReaders.longs();
