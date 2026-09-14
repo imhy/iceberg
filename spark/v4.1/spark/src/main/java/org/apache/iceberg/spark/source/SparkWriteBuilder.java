@@ -106,14 +106,8 @@ class SparkWriteBuilder implements WriteBuilder, SupportsDynamicOverwrite, Suppo
     return TableUtil.supportsRowLineage(table) && mode instanceof CopyOnWriteOperation;
   }
 
-  private boolean writeIncludesRowLineage() {
-    return info.metadataSchema()
-        .map(schema -> schema.exists(field -> field.name().equals(MetadataColumns.ROW_ID.name())))
-        .orElse(false);
-  }
-
-  private StructType sparkWriteSchema() {
-    if (writeIncludesRowLineage()) {
+  private StructType sparkWriteSchema(boolean rowLineage) {
+    if (rowLineage) {
       StructType writeSchema = info.schema();
       StructType metaSchema = info.metadataSchema().get();
       StructField rowId = metaSchema.apply(MetadataColumns.ROW_ID.name());
@@ -128,8 +122,9 @@ class SparkWriteBuilder implements WriteBuilder, SupportsDynamicOverwrite, Suppo
 
   @Override
   public Write build() {
-    validateRowLineage();
-    Schema writeSchema = mergeSchema ? mergeAndValidateWriteSchema() : validateWriteSchema();
+    boolean rowLineage = validateRowLineage();
+    Schema dataSchema = mergeSchema ? mergeAndValidateWriteSchema() : validateWriteSchema();
+    Schema writeSchema = rowLineage ? MetadataColumns.schemaWithRowLineage(dataSchema) : dataSchema;
     SparkUtil.validatePartitionTransforms(table.spec());
     String appId = spark.sparkContext().applicationId();
 
@@ -141,7 +136,7 @@ class SparkWriteBuilder implements WriteBuilder, SupportsDynamicOverwrite, Suppo
         info,
         appId,
         writeSchema,
-        sparkWriteSchema(),
+        sparkWriteSchema(rowLineage),
         writeRequirements()) {
 
       @Override
@@ -181,17 +176,38 @@ class SparkWriteBuilder implements WriteBuilder, SupportsDynamicOverwrite, Suppo
     }
   }
 
-  private void validateRowLineage() {
+  private boolean validateRowLineage() {
+    StructType metadata = info.metadataSchema().orElse(new StructType());
+    boolean hasRowId = metadata.exists(field -> field.name().equals(MetadataColumns.ROW_ID.name()));
+    boolean hasSequenceNumber =
+        metadata.exists(
+            field -> field.name().equals(MetadataColumns.LAST_UPDATED_SEQUENCE_NUMBER.name()));
     Preconditions.checkArgument(
-        writeIncludesRowLineage() || !writeNeedsRowLineage(),
+        hasRowId == hasSequenceNumber,
+        "Row lineage metadata must contain both %s and %s",
+        MetadataColumns.ROW_ID.name(),
+        MetadataColumns.LAST_UPDATED_SEQUENCE_NUMBER.name());
+    boolean needsRowLineage = writeNeedsRowLineage();
+    Preconditions.checkArgument(
+        hasRowId || !needsRowLineage,
         "Row lineage information is missing for write in mode: %s",
         mode);
+    Preconditions.checkArgument(
+        !hasRowId || needsRowLineage,
+        "Row lineage metadata is not supported for write in mode: %s",
+        mode);
+    return needsRowLineage;
   }
 
   private Schema validateWriteSchema() {
     Schema writeSchema = SparkSchemaUtil.convert(table.schema(), info.schema(), caseSensitive);
-    TypeUtil.validateWriteSchema(table.schema(), writeSchema, checkNullability, checkOrdering);
-    return addRowLineageIfNeeded(writeSchema);
+    TypeUtil.validateWriteSchema(
+        TableUtil.formatVersion(table),
+        table.schema(),
+        writeSchema,
+        checkNullability,
+        checkOrdering);
+    return writeSchema;
   }
 
   // merge schema flow:
@@ -206,13 +222,10 @@ class SparkWriteBuilder implements WriteBuilder, SupportsDynamicOverwrite, Suppo
         table.updateSchema().caseSensitive(caseSensitive).unionByNameWith(newSchema);
     Schema mergedSchema = update.apply();
     Schema writeSchema = SparkSchemaUtil.convert(mergedSchema, info.schema(), caseSensitive);
-    TypeUtil.validateWriteSchema(mergedSchema, writeSchema, checkNullability, checkOrdering);
+    TypeUtil.validateWriteSchema(
+        TableUtil.formatVersion(table), mergedSchema, writeSchema, checkNullability, checkOrdering);
     update.commit();
-    return addRowLineageIfNeeded(writeSchema);
-  }
-
-  private Schema addRowLineageIfNeeded(Schema schema) {
-    return writeNeedsRowLineage() ? MetadataColumns.schemaWithRowLineage(schema) : schema;
+    return writeSchema;
   }
 
   sealed interface Mode {
