@@ -195,7 +195,6 @@ public abstract class ReadFormatModelTests<T> {
           new String[] {
             FEATURE_REUSE_CONTAINERS,
             FEATURE_COLUMN_METRICS_TRUNCATE_BINARY,
-            FEATURE_READER_DEFAULT,
             FEATURE_AES_STREAM_ENCRYPTION,
             FEATURE_NATIVE_ENCRYPTION,
             FEATURE_VARIANT
@@ -939,7 +938,10 @@ public abstract class ReadFormatModelTests<T> {
                 readAndAssertEngineRecords(
                     fileFormat, expectedSchema, genericRecords, record -> record))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessage("Missing required field: missing_str");
+        .hasMessage(
+            fileFormat == FileFormat.ORC
+                ? "Missing required field: missing_str (string)"
+                : "Missing required field: missing_str");
   }
 
   @ParameterizedTest

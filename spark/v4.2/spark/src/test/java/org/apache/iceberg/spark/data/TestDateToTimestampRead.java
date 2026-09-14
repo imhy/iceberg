@@ -38,6 +38,7 @@ import org.apache.iceberg.data.Record;
 import org.apache.iceberg.data.avro.DataWriter;
 import org.apache.iceberg.data.orc.GenericOrcWriter;
 import org.apache.iceberg.data.parquet.GenericParquetWriter;
+import org.apache.iceberg.expressions.Literal;
 import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.io.FileAppender;
 import org.apache.iceberg.io.InputFile;
@@ -119,6 +120,68 @@ class TestDateToTimestampRead {
       assertThat(actual.getArray(1).getLong(0)).isEqualTo(expected);
       assertThat(actual.getArray(1).isNullAt(1)).isTrue();
       assertThat(actual.getMap(2).valueArray().getLong(0)).isEqualTo(expected);
+    }
+  }
+
+  @ParameterizedTest
+  @MethodSource("modes")
+  void readsInitialDefaults(
+      FileFormat format, boolean vectorizedOrDictionary, Type.PrimitiveType target)
+      throws IOException {
+    InputFile file = write(format, vectorizedOrDictionary, -1, 0, 1, null);
+    Schema projection =
+        new Schema(
+            Types.NestedField.required("missing")
+                .withId(2)
+                .ofType(target)
+                .withInitialDefault(Literal.of(86_400_000_000L).to(target))
+                .withWriteDefault(Literal.of(2 * 86_400_000_000L).to(target))
+                .build(),
+            DATE.columns().get(0));
+    Object expected = unitsPerDay(target);
+    assertThat(read(format, vectorizedOrDictionary, file, projection))
+        .containsExactly(expected, expected, expected, expected);
+    Schema stored =
+        new Schema(
+            Types.NestedField.from(DATE.columns().get(0))
+                .withInitialDefault(Literal.of(2).to(Types.DateType.get()))
+                .build());
+    assertThat(read(format, vectorizedOrDictionary, file, stored)).containsExactly(-1, 0, 1, null);
+  }
+
+  @ParameterizedTest
+  @MethodSource("modes")
+  void readsDefaultsInsideNullableStructs(
+      FileFormat format, boolean vectorizedOrDictionary, Type.PrimitiveType target)
+      throws IOException {
+    Types.StructType oldStruct =
+        Types.StructType.of(Types.NestedField.required(2, "id", Types.IntegerType.get()));
+    Schema original = new Schema(Types.NestedField.optional(1, "s", oldStruct));
+    Types.StructType newStruct =
+        Types.StructType.of(
+            oldStruct.fields().get(0),
+            Types.NestedField.required("d")
+                .withId(3)
+                .ofType(target)
+                .withInitialDefault(Literal.of(86_400_000_000L).to(target))
+                .build());
+    Schema projection = new Schema(Types.NestedField.optional(1, "s", newStruct));
+    File file = new File(temp, "nested-default." + format);
+    GenericRecord present = GenericRecord.create(original);
+    present.set(0, GenericRecord.create(oldStruct).copy("id", 7));
+    try (FileAppender<Record> writer =
+        newWriter(format, vectorizedOrDictionary, Files.localOutput(file), original)) {
+      writer.add(present);
+      writer.add(GenericRecord.create(original));
+    }
+    try (CloseableIterable<InternalRow> reader =
+        newReader(format, vectorizedOrDictionary, Files.localInput(file), projection)) {
+      var rows = reader.iterator();
+      InternalRow row = rows.next().getStruct(0, 2);
+      assertThat(row.getInt(0)).isEqualTo(7);
+      assertThat(row.getLong(1)).isEqualTo(unitsPerDay(target));
+      assertThat(rows.next().isNullAt(0)).isTrue();
+      assertThat(rows.hasNext()).isFalse();
     }
   }
 

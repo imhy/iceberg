@@ -67,6 +67,7 @@ public final class ORCSchemaUtil {
 
   static final String ICEBERG_ID_ATTRIBUTE = "iceberg.id";
   static final String ICEBERG_REQUIRED_ATTRIBUTE = "iceberg.required";
+  static final String ICEBERG_INITIAL_DEFAULT_ATTRIBUTE = "iceberg.initial-default";
 
   /**
    * The name of the ORC {@link TypeDescription} attribute indicating the Iceberg type corresponding
@@ -407,14 +408,10 @@ public final class ORCSchemaUtil {
                 type);
           }
 
-          if (field.initialDefault() != null) {
-            throw new UnsupportedOperationException(
-                String.format(
-                    "ORC cannot read default value for field %s (%s): %s",
-                    root.findColumnName(fieldId), type, field.initialDefault()));
-          }
-
           orcType = convert(fieldId, type, false);
+          if (field.initialDefault() != null) {
+            orcType.setAttribute(ICEBERG_INITIAL_DEFAULT_ATTRIBUTE, "true");
+          }
         }
     }
 

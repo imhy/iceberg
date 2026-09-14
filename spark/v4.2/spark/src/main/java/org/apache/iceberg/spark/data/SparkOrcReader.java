@@ -26,6 +26,7 @@ import org.apache.iceberg.orc.OrcValueReader;
 import org.apache.iceberg.orc.OrcValueReaders;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
+import org.apache.iceberg.spark.SparkUtil;
 import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.Types;
 import org.apache.orc.TypeDescription;
@@ -94,6 +95,12 @@ public class SparkOrcReader implements OrcRowReader<InternalRow> {
         OrcValueReader<?> keyReader,
         OrcValueReader<?> valueReader) {
       return SparkOrcValueReaders.map(keyReader, valueReader);
+    }
+
+    @Override
+    public OrcValueReader<?> initialDefault(Types.NestedField field) {
+      return OrcValueReaders.constants(
+          SparkUtil.internalToSpark(field.type(), field.initialDefault()));
     }
 
     @Override
