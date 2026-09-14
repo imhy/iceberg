@@ -30,6 +30,7 @@ import org.apache.iceberg.expressions.BoundPredicate;
 import org.apache.iceberg.expressions.BoundReference;
 import org.apache.iceberg.expressions.Expression;
 import org.apache.iceberg.expressions.ExpressionVisitors;
+import org.apache.iceberg.expressions.Expressions;
 import org.apache.iceberg.expressions.Literal;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableSet;
 import org.apache.iceberg.types.Type;
@@ -52,7 +53,8 @@ class ExpressionToSearchArgument
     Map<Integer, String> idToColumnName = ORCSchemaUtil.idToOrcName(physicalSchema);
     SearchArgument.Builder builder = SearchArgumentFactory.newBuilder();
     ExpressionVisitors.visit(
-            expr, new ExpressionToSearchArgument(builder, idToColumnName, physicalSchema))
+            Expressions.rewriteNot(expr),
+            new ExpressionToSearchArgument(builder, idToColumnName, physicalSchema))
         .invoke();
     return builder.build();
   }
@@ -162,20 +164,30 @@ class ExpressionToSearchArgument
 
   @Override
   public <T> Action lt(Bound<T> expr, Literal<T> lit) {
-    return () ->
-        this.builder.lessThan(
-            idToColumnName.get(expr.ref().fieldId()),
-            type(expr.ref().type()),
-            literal(expr.ref().type(), lit.value()));
+    return () -> {
+      // Iceberg orders null before non-null values; ORC comparisons use SQL null semantics.
+      this.builder.startOr();
+      isNull(expr).invoke();
+      this.builder.lessThan(
+          idToColumnName.get(expr.ref().fieldId()),
+          type(expr.ref().type()),
+          literal(expr.ref().type(), lit.value()));
+      this.builder.end();
+    };
   }
 
   @Override
   public <T> Action ltEq(Bound<T> expr, Literal<T> lit) {
-    return () ->
-        this.builder.lessThanEquals(
-            idToColumnName.get(expr.ref().fieldId()),
-            type(expr.ref().type()),
-            literal(expr.ref().type(), lit.value()));
+    return () -> {
+      // Iceberg orders null before non-null values; ORC comparisons use SQL null semantics.
+      this.builder.startOr();
+      isNull(expr).invoke();
+      this.builder.lessThanEquals(
+          idToColumnName.get(expr.ref().fieldId()),
+          type(expr.ref().type()),
+          literal(expr.ref().type(), lit.value()));
+      this.builder.end();
+    };
   }
 
   @Override
