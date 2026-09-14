@@ -18,6 +18,7 @@
  */
 package org.apache.iceberg.arrow.vectorized;
 
+import java.time.temporal.ChronoUnit;
 import java.util.Map;
 import java.util.Optional;
 import org.apache.arrow.memory.ArrowBuf;
@@ -36,6 +37,7 @@ import org.apache.arrow.vector.TimeStampMicroTZVector;
 import org.apache.arrow.vector.TimeStampMicroVector;
 import org.apache.arrow.vector.TimeStampNanoTZVector;
 import org.apache.arrow.vector.TimeStampNanoVector;
+import org.apache.arrow.vector.TimeStampVector;
 import org.apache.arrow.vector.types.FloatingPointPrecision;
 import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.Field;
@@ -47,7 +49,9 @@ import org.apache.iceberg.arrow.vectorized.parquet.VectorizedColumnIterator;
 import org.apache.iceberg.parquet.ParquetUtil;
 import org.apache.iceberg.parquet.VectorizedReader;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
+import org.apache.iceberg.types.TypeUtil;
 import org.apache.iceberg.types.Types;
+import org.apache.iceberg.util.DateTimeUtil;
 import org.apache.parquet.column.ColumnDescriptor;
 import org.apache.parquet.column.Dictionary;
 import org.apache.parquet.column.page.PageReadStore;
@@ -70,9 +74,11 @@ public class VectorizedArrowReader implements VectorizedReader<VectorHolder> {
   private final VectorizedColumnIterator vectorizedColumnIterator;
   private final Types.NestedField icebergField;
   private final BufferAllocator rootAlloc;
+  private final ChronoUnit datePromotionUnit;
 
   private int batchSize;
   private FieldVector vec;
+  private TimeStampVector promotedDates;
   private Integer typeWidth;
   private ReadType readType;
   private NullabilityHolder nullabilityHolder;
@@ -93,6 +99,22 @@ public class VectorizedArrowReader implements VectorizedReader<VectorHolder> {
     this.columnDescriptor = desc;
     this.rootAlloc = ra;
     this.vectorizedColumnIterator = new VectorizedColumnIterator(desc, "", setArrowValidityVector);
+    if (desc.getPrimitiveType().getLogicalTypeAnnotation()
+            instanceof LogicalTypeAnnotation.DateLogicalTypeAnnotation
+        && (icebergField.type() instanceof Types.TimestampType
+            || icebergField.type() instanceof Types.TimestampNanoType)) {
+      Preconditions.checkArgument(
+          TypeUtil.isDateToTimestampPromotion(
+              Types.DateType.get(), icebergField.type().asPrimitiveType()),
+          "Cannot promote date to %s",
+          icebergField.type());
+      this.datePromotionUnit =
+          icebergField.type() instanceof Types.TimestampNanoType
+              ? ChronoUnit.NANOS
+              : ChronoUnit.MICROS;
+    } else {
+      this.datePromotionUnit = null;
+    }
   }
 
   private VectorizedArrowReader() {
@@ -105,6 +127,7 @@ public class VectorizedArrowReader implements VectorizedReader<VectorHolder> {
     this.columnDescriptor = null;
     this.rootAlloc = null;
     this.vectorizedColumnIterator = null;
+    this.datePromotionUnit = null;
   }
 
   private enum ReadType {
@@ -213,8 +236,40 @@ public class VectorizedArrowReader implements VectorizedReader<VectorHolder> {
         "Number of values read, %s, does not equal expected, %s",
         vec.getValueCount(),
         numValsToRead);
+    if (datePromotionUnit != null) {
+      return promoteDates(reuse, dictEncoded);
+    }
     return new VectorHolder(
         columnDescriptor, vec, dictEncoded, dictionary, nullabilityHolder, icebergField);
+  }
+
+  private VectorHolder promoteDates(VectorHolder reuse, boolean dictionaryEncoded) {
+    if (reuse == null || promotedDates == null) {
+      if (promotedDates != null) {
+        promotedDates.close();
+      }
+      promotedDates =
+          (TimeStampVector) ArrowSchemaUtil.convert(icebergField).createVector(rootAlloc);
+      promotedDates.allocateNew(batchSize);
+    }
+
+    for (int row = 0; row < vec.getValueCount(); row += 1) {
+      if (nullabilityHolder.isNullAt(row) == 1) {
+        promotedDates.setNull(row);
+      } else {
+        // Physical vectors may use only NullabilityHolder, without Arrow validity bits.
+        int value = vec.getDataBuffer().getInt((long) row * Integer.BYTES);
+        int days = dictionaryEncoded ? dictionary.decodeToInt(value) : value;
+        long timestamp =
+            datePromotionUnit == ChronoUnit.NANOS
+                ? DateTimeUtil.nanosFromDays(days)
+                : DateTimeUtil.microsFromDays(days);
+        promotedDates.setSafe(row, timestamp);
+      }
+    }
+    promotedDates.setValueCount(vec.getValueCount());
+    return new VectorHolder(
+        columnDescriptor, promotedDates, false, null, nullabilityHolder, icebergField);
   }
 
   private void allocateFieldVector(boolean dictionaryEncodedVector) {
@@ -257,6 +312,16 @@ public class VectorizedArrowReader implements VectorizedReader<VectorHolder> {
       physicalType =
           Types.NestedField.from(logicalType)
               .ofType(type)
+              .withInitialDefault(null)
+              .withWriteDefault(null)
+              .build();
+    } else if (primitive.getLogicalTypeAnnotation()
+            instanceof LogicalTypeAnnotation.DateLogicalTypeAnnotation
+        && (logicalType.type() instanceof Types.TimestampType
+            || logicalType.type() instanceof Types.TimestampNanoType)) {
+      physicalType =
+          Types.NestedField.from(logicalType)
+              .ofType(Types.DateType.get())
               .withInitialDefault(null)
               .withWriteDefault(null)
               .build();
@@ -390,6 +455,9 @@ public class VectorizedArrowReader implements VectorizedReader<VectorHolder> {
   public void close() {
     if (vec != null) {
       vec.close();
+    }
+    if (promotedDates != null) {
+      promotedDates.close();
     }
   }
 
