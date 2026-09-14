@@ -137,6 +137,11 @@ public class PlannedDataReader<T> implements DatumReader<T>, SupportsRowPosition
       if (logicalType != null) {
         switch (logicalType.getName()) {
           case "date":
+            if (partner != null
+                && (partner.typeId() == Type.TypeID.TIMESTAMP
+                    || partner.typeId() == Type.TypeID.TIMESTAMP_NANO)) {
+              return GenericReaders.datesAsTimestamps(partner.asPrimitiveType());
+            }
             return GenericReaders.dates();
 
           case "time-micros":

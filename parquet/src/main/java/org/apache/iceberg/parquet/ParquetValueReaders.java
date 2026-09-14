@@ -36,6 +36,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.function.BiFunction;
 import java.util.function.Function;
+import org.apache.iceberg.FieldStats;
 import org.apache.iceberg.MetadataColumns;
 import org.apache.iceberg.StructLike;
 import org.apache.iceberg.common.DynConstructors;
@@ -45,6 +46,7 @@ import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
+import org.apache.iceberg.types.Type.TypeID;
 import org.apache.iceberg.types.Types;
 import org.apache.iceberg.util.UUIDUtil;
 import org.apache.parquet.column.ColumnDescriptor;
@@ -204,6 +206,15 @@ public class ParquetValueReaders {
       List<ParquetValueReader<?>> readers, Types.StructType struct, Class<T> structClass) {
     if (structClass.equals(Record.class)) {
       return ((ParquetValueReader<T>) recordReader(readers, struct));
+    } else if (FieldStats.class.isAssignableFrom(structClass)) {
+      List<ParquetValueReader<?>> statsReaders = Lists.newArrayList(readers);
+      for (int i = 0; i < statsReaders.size(); i++) {
+        TypeID typeId = struct.fields().get(i).type().typeId();
+        if (typeId == TypeID.TIMESTAMP || typeId == TypeID.TIMESTAMP_NANO) {
+          statsReaders.set(i, new UnknownOnOverflowReader(readers.get(i)));
+        }
+      }
+      return new StructLikeReader<>(statsReaders, struct, structClass);
     } else {
       return new StructLikeReader<>(readers, struct, structClass);
     }
@@ -856,6 +867,39 @@ public class ParquetValueReaders {
     @Override
     public long readLong() {
       return 1000L * column.nextLong();
+    }
+  }
+
+  private static class UnknownOnOverflowReader implements ParquetValueReader<Object> {
+    private final ParquetValueReader<?> reader;
+
+    private UnknownOnOverflowReader(ParquetValueReader<?> reader) {
+      this.reader = reader;
+    }
+
+    @Override
+    public Object read(Object reuse) {
+      try {
+        return reader.read(null);
+      } catch (ArithmeticException e) {
+        // Bounds that overflow after promotion cannot prove anything about the file's rows.
+        return null;
+      }
+    }
+
+    @Override
+    public TripleIterator<?> column() {
+      return reader.column();
+    }
+
+    @Override
+    public List<TripleIterator<?>> columns() {
+      return reader.columns();
+    }
+
+    @Override
+    public void setPageSource(PageReadStore pageStore) {
+      reader.setPageSource(pageStore);
     }
   }
 

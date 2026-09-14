@@ -27,6 +27,7 @@ import org.apache.avro.LogicalTypes;
 import org.apache.avro.Schema;
 import org.apache.avro.io.DatumReader;
 import org.apache.avro.io.Decoder;
+import org.apache.iceberg.FieldStats;
 import org.apache.iceberg.StructLike;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.types.Type;
@@ -134,6 +135,31 @@ public class InternalReader<T> implements DatumReader<T>, SupportsRowPosition, S
         List<Pair<Integer, ValueReader<?>>> readPlan, int fieldId, Types.StructType struct) {
 
       Class<? extends StructLike> structClass = typeMap.get(fieldId);
+      if (structClass != null && FieldStats.class.isAssignableFrom(structClass)) {
+        for (int i = 0; i < readPlan.size(); i++) {
+          Pair<Integer, ValueReader<?>> field = readPlan.get(i);
+          if (field.first() != null) {
+            Type type = struct.fields().get(field.first()).type();
+            if (type.typeId() == Type.TypeID.TIMESTAMP
+                || type.typeId() == Type.TypeID.TIMESTAMP_NANO) {
+              ValueReader<?> boundReader = field.second();
+              readPlan.set(
+                  i,
+                  Pair.of(
+                      field.first(),
+                      (decoder, reuse) -> {
+                        try {
+                          return boundReader.read(decoder, null);
+                        } catch (ArithmeticException e) {
+                          // Unrepresentable metadata bounds are unknown, not saturated point
+                          // values.
+                          return null;
+                        }
+                      }));
+            }
+          }
+        }
+      }
       if (structClass != null) {
         return InternalReaders.struct(struct, structClass, readPlan);
       } else {
@@ -179,6 +205,11 @@ public class InternalReader<T> implements DatumReader<T>, SupportsRowPosition, S
       if (logicalType != null) {
         switch (logicalType.getName()) {
           case "date":
+            if (partner != null
+                && (partner.second().typeId() == Type.TypeID.TIMESTAMP
+                    || partner.second().typeId() == Type.TypeID.TIMESTAMP_NANO)) {
+              return ValueReaders.datesAsTimestamps(partner.second().asPrimitiveType());
+            }
             return ValueReaders.ints();
 
           case "time-micros":
