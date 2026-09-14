@@ -25,7 +25,9 @@ import org.apache.iceberg.MetadataColumns;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.types.Type;
+import org.apache.iceberg.types.TypeUtil;
 import org.apache.iceberg.types.Types;
+import org.apache.iceberg.util.DateTimeUtil;
 import org.apache.orc.TypeDescription;
 import org.apache.orc.storage.ql.exec.vector.BytesColumnVector;
 import org.apache.orc.storage.ql.exec.vector.ColumnVector;
@@ -42,6 +44,20 @@ public class OrcValueReaders {
 
   public static OrcValueReader<Integer> ints() {
     return IntegerReader.INSTANCE;
+  }
+
+  /** Returns a reader of physical DATE values in the target timestamp's precision. */
+  public static OrcValueReader<Long> datesAsTimestamps(Type.PrimitiveType target) {
+    Preconditions.checkArgument(
+        TypeUtil.isDateToTimestampPromotion(Types.DateType.get(), target),
+        "Cannot promote date to %s",
+        target);
+    if (target instanceof Types.TimestampNanoType) {
+      return (vector, row) ->
+          DateTimeUtil.nanosFromDays(Math.toIntExact(((LongColumnVector) vector).vector[row]));
+    }
+    return (vector, row) ->
+        DateTimeUtil.microsFromDays(Math.toIntExact(((LongColumnVector) vector).vector[row]));
   }
 
   public static OrcValueReader<Long> longs() {
