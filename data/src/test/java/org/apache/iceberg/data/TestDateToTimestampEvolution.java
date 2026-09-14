@@ -26,12 +26,15 @@ import java.io.IOException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Locale;
 import java.util.stream.Stream;
 import org.apache.iceberg.BaseTable;
 import org.apache.iceberg.DataFile;
 import org.apache.iceberg.DataFiles;
+import org.apache.iceberg.FileFormat;
 import org.apache.iceberg.FileScanTask;
 import org.apache.iceberg.Files;
+import org.apache.iceberg.Metrics;
 import org.apache.iceberg.PartitionData;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.Schema;
@@ -40,12 +43,14 @@ import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.TableMetadataParser;
 import org.apache.iceberg.TableOperations;
 import org.apache.iceberg.TestTables;
+import org.apache.iceberg.data.orc.GenericOrcWriter;
 import org.apache.iceberg.data.parquet.GenericParquetWriter;
 import org.apache.iceberg.expressions.Expression;
 import org.apache.iceberg.expressions.Expressions;
 import org.apache.iceberg.expressions.Literal;
 import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.io.FileAppender;
+import org.apache.iceberg.orc.ORC;
 import org.apache.iceberg.parquet.Parquet;
 import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.Types;
@@ -70,10 +75,11 @@ class TestDateToTimestampEvolution {
             target ->
                 Stream.of(true, false)
                     .flatMap(
-                        dictionary ->
-                            Stream.of(true, false)
-                                .map(
-                                    partitioned -> Arguments.of(target, dictionary, partitioned))));
+                        partitioned ->
+                            Stream.of(
+                                Arguments.of(target, FileFormat.PARQUET, true, partitioned),
+                                Arguments.of(target, FileFormat.PARQUET, false, partitioned),
+                                Arguments.of(target, FileFormat.ORC, false, partitioned))));
   }
 
   @AfterEach
@@ -84,17 +90,18 @@ class TestDateToTimestampEvolution {
   @ParameterizedTest
   @MethodSource("readModes")
   void publicEvolutionReadsMixedFiles(
-      Type.PrimitiveType target, boolean dictionary, boolean partitioned) throws IOException {
+      Type.PrimitiveType target, FileFormat format, boolean dictionary, boolean partitioned)
+      throws IOException {
     PartitionSpec spec =
         partitioned
             ? PartitionSpec.builderFor(DATE_SCHEMA).day("d").build()
             : PartitionSpec.unpartitioned();
     Table table = TestTables.create(new File(temp, "table"), "test", DATE_SCHEMA, spec, 3);
-    DataFile negative = write(table, "negative", dictionary, -1, LocalDate.ofEpochDay(-1));
-    DataFile zero = write(table, "zero", dictionary, 0, LocalDate.ofEpochDay(0));
-    DataFile old = write(table, "old", dictionary, 1, LocalDate.ofEpochDay(1));
-    DataFile disjoint = write(table, "disjoint", dictionary, 10, LocalDate.ofEpochDay(10));
-    DataFile oldNull = write(table, "old-null", dictionary, null, (Object) null);
+    DataFile negative = write(table, format, "negative", dictionary, -1, LocalDate.ofEpochDay(-1));
+    DataFile zero = write(table, format, "zero", dictionary, 0, LocalDate.ofEpochDay(0));
+    DataFile old = write(table, format, "old", dictionary, 1, LocalDate.ofEpochDay(1));
+    DataFile disjoint = write(table, format, "disjoint", dictionary, 10, LocalDate.ofEpochDay(10));
+    DataFile oldNull = write(table, format, "old-null", dictionary, null, (Object) null);
     table
         .newAppend()
         .appendFile(negative)
@@ -126,8 +133,8 @@ class TestDateToTimestampEvolution {
     }
     LocalDateTime midnight = LocalDate.ofEpochDay(1).atStartOfDay();
     LocalDateTime afternoon = midnight.plusHours(12);
-    DataFile current = write(table, "current", dictionary, 1, midnight, afternoon);
-    DataFile newNull = write(table, "new-null", dictionary, null, (Object) null);
+    DataFile current = write(table, format, "current", dictionary, 1, midnight, afternoon);
+    DataFile newNull = write(table, format, "new-null", dictionary, null, (Object) null);
     table.newAppend().appendFile(current).appendFile(newNull).commit();
     Expression equality = Expressions.equal("d", midnight.toString());
     try (CloseableIterable<FileScanTask> tasks = table.newScan().filter(equality).planFiles()) {
@@ -152,6 +159,58 @@ class TestDateToTimestampEvolution {
         afternoon);
     assertRows(table, Expressions.isNull("d"), null, null);
     assertRows(table, Expressions.equal("d", "1970-01-04T00:00:00"));
+  }
+
+  @ParameterizedTest
+  @MethodSource("targets")
+  void readsOrcPredicatesWithoutFileMetrics(Type.PrimitiveType target) throws IOException {
+    Table table =
+        TestTables.create(
+            new File(temp, "table"), "test", DATE_SCHEMA, PartitionSpec.unpartitioned(), 3);
+    DataFile physical =
+        write(
+            table,
+            FileFormat.ORC,
+            "dates",
+            false,
+            null,
+            LocalDate.ofEpochDay(-1),
+            LocalDate.ofEpochDay(0),
+            LocalDate.ofEpochDay(1),
+            null);
+    table
+        .newAppend()
+        .appendFile(
+            DataFiles.builder(table.spec())
+                .copy(physical)
+                .withMetrics(new Metrics(physical.recordCount()))
+                .build())
+        .commit();
+    table.updateSchema().updateColumn("d", target).commit();
+    reload(table);
+    LocalDateTime before = LocalDate.ofEpochDay(-1).atStartOfDay();
+    LocalDateTime epoch = LocalDate.ofEpochDay(0).atStartOfDay();
+    LocalDateTime after = LocalDate.ofEpochDay(1).atStartOfDay();
+    assertRows(table, Expressions.equal("d", epoch.toString()), epoch);
+    // Iceberg's evaluator orders null before non-null values for comparisons.
+    assertRows(
+        table, Expressions.lessThan("d", epoch.plusHours(12).toString()), before, epoch, null);
+    assertRows(table, Expressions.greaterThan("d", epoch.plusHours(12).toString()), after);
+    assertRows(table, Expressions.in("d", before.toString(), after.toString()), before, after);
+    assertRows(table, Expressions.notIn("d", before.toString(), after.toString()), epoch, null);
+    assertRows(
+        table, Expressions.not(Expressions.equal("d", epoch.toString())), before, after, null);
+    assertRows(
+        table,
+        Expressions.or(Expressions.isNull("d"), Expressions.equal("d", epoch.toString())),
+        epoch,
+        null);
+    assertRows(
+        table,
+        Expressions.and(Expressions.notNull("d"), Expressions.notEqual("d", epoch.toString())),
+        before,
+        after);
+    assertRows(table, Expressions.isNull("d"), (Object) null);
   }
 
   @ParameterizedTest
@@ -211,13 +270,29 @@ class TestDateToTimestampEvolution {
   private DataFile write(
       Table table, String name, boolean dictionary, Integer day, Object... values)
       throws IOException {
-    File path = new File(temp, name + ".parquet");
+    return write(table, FileFormat.PARQUET, name, dictionary, day, values);
+  }
+
+  private DataFile write(
+      Table table,
+      FileFormat format,
+      String name,
+      boolean dictionary,
+      Integer day,
+      Object... values)
+      throws IOException {
+    File path = new File(temp, name + "." + format.name().toLowerCase(Locale.ROOT));
     FileAppender<Record> appender =
-        Parquet.write(Files.localOutput(path))
-            .schema(table.schema())
-            .set("parquet.enable.dictionary", Boolean.toString(dictionary))
-            .createWriterFunc(GenericParquetWriter::create)
-            .build();
+        format == FileFormat.ORC
+            ? ORC.write(Files.localOutput(path))
+                .schema(table.schema())
+                .createWriterFunc(GenericOrcWriter::buildWriter)
+                .build()
+            : Parquet.write(Files.localOutput(path))
+                .schema(table.schema())
+                .set("parquet.enable.dictionary", Boolean.toString(dictionary))
+                .createWriterFunc(GenericParquetWriter::create)
+                .build();
     try (appender) {
       for (Object value : values) {
         GenericRecord record = GenericRecord.create(table.schema());
