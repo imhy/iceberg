@@ -411,12 +411,39 @@ public class TypeUtil {
    * @throws IllegalArgumentException if a field cannot be found (by id) in the source schema
    */
   public static Schema reassignDoc(Schema schema, Schema docSourceSchema) {
-    TypeUtil.CustomOrderSchemaVisitor<Type> visitor = new ReassignDoc(docSourceSchema);
+    return reassignAttributes(
+        schema,
+        new ReassignFieldAttributes(
+            docSourceSchema,
+            (field, source) -> Types.NestedField.from(field).withDoc(source.doc())));
+  }
+
+  /**
+   * Copies initial and write defaults from fields with matching IDs and types.
+   *
+   * <p>Fields with different types retain their existing defaults. Callers must finalize projection
+   * types before restoring defaults; this method does not perform type promotion.
+   */
+  public static Schema reassignDefaults(Schema schema, Schema defaultSourceSchema) {
+    return reassignAttributes(
+        schema,
+        new ReassignFieldAttributes(
+            defaultSourceSchema,
+            (field, source) -> {
+              Types.NestedField.Builder builder = Types.NestedField.from(field);
+              if (field.type().equals(source.type())) {
+                builder
+                    .withInitialDefault(source.initialDefaultLiteral())
+                    .withWriteDefault(source.writeDefaultLiteral());
+              }
+              return builder;
+            }));
+  }
+
+  private static Schema reassignAttributes(Schema schema, ReassignFieldAttributes visitor) {
+    Types.StructType struct = visit(schema, visitor).asStructType();
     return new Schema(
-        visitor
-            .schema(schema, new VisitFuture<>(schema.asStruct(), visitor))
-            .asStructType()
-            .fields());
+        schema.schemaId(), struct.fields(), schema.getAliases(), schema.identifierFieldIds());
   }
 
   /**

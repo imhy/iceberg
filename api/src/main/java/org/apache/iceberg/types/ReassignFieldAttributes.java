@@ -19,16 +19,23 @@
 package org.apache.iceberg.types;
 
 import java.util.List;
+import java.util.function.BiFunction;
 import java.util.function.Supplier;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 
-class ReassignDoc extends TypeUtil.CustomOrderSchemaVisitor<Type> {
-  private final Schema docSourceSchema;
+class ReassignFieldAttributes extends TypeUtil.CustomOrderSchemaVisitor<Type> {
+  private final Schema sourceSchema;
 
-  ReassignDoc(Schema docSourceSchema) {
-    this.docSourceSchema = docSourceSchema;
+  private final BiFunction<Types.NestedField, Types.NestedField, Types.NestedField.Builder>
+      copyAttributes;
+
+  ReassignFieldAttributes(
+      Schema sourceSchema,
+      BiFunction<Types.NestedField, Types.NestedField, Types.NestedField.Builder> copyAttributes) {
+    this.sourceSchema = sourceSchema;
+    this.copyAttributes = copyAttributes;
   }
 
   @Override
@@ -46,12 +53,11 @@ class ReassignDoc extends TypeUtil.CustomOrderSchemaVisitor<Type> {
     for (int i = 0; i < length; i += 1) {
       Types.NestedField field = fields.get(i);
       int fieldId = field.fieldId();
-      Types.NestedField docField = docSourceSchema.findField(fieldId);
+      Types.NestedField sourceField = sourceSchema.findField(fieldId);
 
-      Preconditions.checkNotNull(docField, "Field " + fieldId + " not found in source schema");
+      Preconditions.checkNotNull(sourceField, "Field " + fieldId + " not found in source schema");
 
-      newFields.add(
-          Types.NestedField.from(field).ofType(types.get(i)).withDoc(docField.doc()).build());
+      newFields.add(copyAttributes.apply(field, sourceField).ofType(types.get(i)).build());
     }
 
     return Types.StructType.of(newFields);
