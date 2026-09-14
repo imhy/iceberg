@@ -58,6 +58,7 @@ import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.spark.CommitMetadata;
 import org.apache.iceberg.spark.FileRewriteCoordinator;
+import org.apache.iceberg.spark.SparkSchemaUtil;
 import org.apache.iceberg.spark.SparkWriteConf;
 import org.apache.iceberg.spark.SparkWriteRequirements;
 import org.apache.iceberg.spark.SparkWriteUtil;
@@ -154,7 +155,9 @@ abstract class SparkWrite extends BaseSparkWrite implements Write, RequiresDistr
 
   @Override
   public Distribution requiredDistribution() {
-    Distribution distribution = writeRequirements.distribution();
+    Distribution distribution =
+        SparkTypePromotion.distribution(
+            writeRequirements.distribution(), writeSchema, table.schema());
     LOG.debug("Requesting {} as write distribution for table {}", distribution, table.name());
     return distribution;
   }
@@ -166,7 +169,8 @@ abstract class SparkWrite extends BaseSparkWrite implements Write, RequiresDistr
 
   @Override
   public SortOrder[] requiredOrdering() {
-    SortOrder[] ordering = writeRequirements.ordering();
+    SortOrder[] ordering =
+        SparkTypePromotion.ordering(writeRequirements.ordering(), writeSchema, table.schema());
     LOG.debug("Requesting {} as write ordering for table {}", ordering, table.name());
     return ordering;
   }
@@ -753,33 +757,42 @@ abstract class SparkWrite extends BaseSparkWrite implements Write, RequiresDistr
               .format(format)
               .operationId(operationId)
               .build();
+      StructType outputType = SparkTypePromotion.writeType(dsSchema, writeSchema, table.schema());
+      Schema outputSchema =
+          outputType.equals(dsSchema)
+              ? writeSchema
+              : SparkSchemaUtil.convert(writeSchema, outputType);
       SparkFileWriterFactory writerFactory =
           SparkFileWriterFactory.builderFor(table)
               .dataFileFormat(format)
-              .dataSchema(writeSchema)
-              .dataSparkType(dsSchema)
+              .dataSchema(outputSchema)
+              .dataSparkType(outputType)
               .writeProperties(writeProperties)
               .dataSortOrder(table.sortOrders().get(sortOrderId))
               .build();
 
-      Function<InternalRow, InternalRow> rowLineageExtractor = new ExtractRowLineage(writeSchema);
+      Function<InternalRow, InternalRow> rowLineageExtractor = new ExtractRowLineage(outputSchema);
 
+      DataWriter<InternalRow> writer;
       if (spec.isUnpartitioned()) {
-        return new UnpartitionedDataWriter(
-            writerFactory, fileFactory, io, spec, targetFileSize, rowLineageExtractor);
+        writer =
+            new UnpartitionedDataWriter(
+                writerFactory, fileFactory, io, spec, targetFileSize, rowLineageExtractor);
 
       } else {
-        return new PartitionedDataWriter(
-            writerFactory,
-            fileFactory,
-            io,
-            spec,
-            writeSchema,
-            dsSchema,
-            targetFileSize,
-            useFanoutWriter,
-            rowLineageExtractor);
+        writer =
+            new PartitionedDataWriter(
+                writerFactory,
+                fileFactory,
+                io,
+                spec,
+                outputSchema,
+                outputType,
+                targetFileSize,
+                useFanoutWriter,
+                rowLineageExtractor);
       }
+      return SparkTypePromotion.wrap(writer, dsSchema, outputType);
     }
   }
 
