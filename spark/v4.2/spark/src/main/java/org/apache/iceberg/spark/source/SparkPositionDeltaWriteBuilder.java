@@ -134,6 +134,7 @@ class SparkPositionDeltaWriteBuilder implements DeltaWriteBuilder {
   }
 
   private void validateSchema(String context, Schema expected, Schema actual) {
-    TypeUtil.validateSchema(context, expected, actual, checkNullability, checkOrdering);
+    TypeUtil.validateSchema(
+        TableUtil.formatVersion(table), context, expected, actual, checkNullability, checkOrdering);
   }
 }
