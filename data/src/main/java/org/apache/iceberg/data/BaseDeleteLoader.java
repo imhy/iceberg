@@ -29,6 +29,7 @@ import org.apache.iceberg.DeleteFile;
 import org.apache.iceberg.FileFormat;
 import org.apache.iceberg.MetadataColumns;
 import org.apache.iceberg.Schema;
+import org.apache.iceberg.SchemaParser;
 import org.apache.iceberg.StructLike;
 import org.apache.iceberg.deletes.Deletes;
 import org.apache.iceberg.deletes.PositionDeleteIndex;
@@ -108,7 +109,8 @@ public class BaseDeleteLoader implements DeleteLoader {
   private Iterable<StructLike> getOrReadEqDeletes(DeleteFile deleteFile, Schema projection) {
     long estimatedSize = estimateEqDeletesSize(deleteFile, projection);
     if (canCache(estimatedSize)) {
-      String cacheKey = deleteFile.location();
+      // Cached rows depend on projected field order, promoted types, and initial defaults.
+      String cacheKey = SchemaParser.toJson(projection) + ":" + deleteFile.location();
       return getOrLoad(cacheKey, () -> readEqDeletes(deleteFile, projection), estimatedSize);
     } else {
       return readEqDeletes(deleteFile, projection);
