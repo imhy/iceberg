@@ -119,6 +119,7 @@ class SparkPositionDeltaWrite implements DeltaWrite, RequiresDistributionAndOrde
   private final SparkWriteRequirements writeRequirements;
   private final int sortOrderId;
   private final Context context;
+  private final Schema inputDataSchema;
   private final Map<String, String> writeProperties;
 
   private boolean cleanupOnAbort = false;
@@ -145,7 +146,8 @@ class SparkPositionDeltaWrite implements DeltaWrite, RequiresDistributionAndOrde
     this.extraSnapshotMetadata = writeConf.extraSnapshotMetadata();
     this.writeRequirements = writeConf.positionDeltaRequirements(command);
     this.sortOrderId = writeConf.outputSortOrderId(writeRequirements);
-    this.context = new Context(dataSchema, writeConf, info, writeRequirements);
+    this.inputDataSchema = dataSchema;
+    this.context = new Context(dataSchema, table.schema(), writeConf, info, writeRequirements);
     this.writeProperties = writeConf.writeProperties();
 
     if (this.table instanceof BaseTable) {
@@ -156,7 +158,9 @@ class SparkPositionDeltaWrite implements DeltaWrite, RequiresDistributionAndOrde
 
   @Override
   public Distribution requiredDistribution() {
-    Distribution distribution = writeRequirements.distribution();
+    Distribution distribution =
+        SparkTypePromotion.distribution(
+            writeRequirements.distribution(), inputDataSchema, table.schema());
     LOG.debug("Requesting {} as write distribution for table {}", distribution, table.name());
     return distribution;
   }
@@ -168,7 +172,8 @@ class SparkPositionDeltaWrite implements DeltaWrite, RequiresDistributionAndOrde
 
   @Override
   public SortOrder[] requiredOrdering() {
-    SortOrder[] ordering = writeRequirements.ordering();
+    SortOrder[] ordering =
+        SparkTypePromotion.ordering(writeRequirements.ordering(), inputDataSchema, table.schema());
     LOG.debug("Requesting {} as write ordering for table {}", ordering, table.name());
     return ordering;
   }
@@ -682,6 +687,7 @@ class SparkPositionDeltaWrite implements DeltaWrite, RequiresDistributionAndOrde
     protected final Function<InternalRow, InternalRow> rowLineageExtractor;
 
     private final FileIO io;
+    private final Function<InternalRow, InternalRow> rowConverter;
     private final Map<Integer, PartitionSpec> specs;
     private final InternalRowWrapper deletePartitionRowWrapper;
     private final Map<Integer, StructProjection> deletePartitionProjections;
@@ -705,6 +711,8 @@ class SparkPositionDeltaWrite implements DeltaWrite, RequiresDistributionAndOrde
               newDataWriter(table, writerFactory, dataFileFactory, context),
               newDeleteWriter(table, rewritableDeletes, writerFactory, deleteFileFactory, context));
       this.io = table.io();
+      this.rowConverter =
+          SparkTypePromotion.rowConverter(context.inputDataSparkType(), context.dataSparkType());
       this.specs = table.specs();
 
       Types.StructType partitionType = Partitioning.partitionType(table);
@@ -768,6 +776,10 @@ class SparkPositionDeltaWrite implements DeltaWrite, RequiresDistributionAndOrde
       InternalRow rowLineage = rowLineageExtractor.apply(meta);
       return rowLineage == null ? data : new JoinedRow(data, rowLineage);
     }
+
+    protected InternalRow promote(InternalRow row) {
+      return rowConverter.apply(row);
+    }
   }
 
   private static class UnpartitionedDeltaWriter extends DeleteAndDataDeltaWriter {
@@ -804,7 +816,7 @@ class SparkPositionDeltaWrite implements DeltaWrite, RequiresDistributionAndOrde
 
     @Override
     public void reinsert(InternalRow meta, InternalRow row) throws IOException {
-      delegate.insert(decorateWithRowLineage(meta, row), dataSpec, null);
+      delegate.insert(decorateWithRowLineage(meta, promote(row)), dataSpec, null);
     }
   }
 
@@ -848,15 +860,17 @@ class SparkPositionDeltaWrite implements DeltaWrite, RequiresDistributionAndOrde
 
     @Override
     public void reinsert(InternalRow meta, InternalRow row) throws IOException {
-      dataPartitionKey.partition(internalRowDataWrapper.wrap(row));
-      delegate.insert(decorateWithRowLineage(meta, row), dataSpec, dataPartitionKey);
+      InternalRow promoted = promote(row);
+      dataPartitionKey.partition(internalRowDataWrapper.wrap(promoted));
+      delegate.insert(decorateWithRowLineage(meta, promoted), dataSpec, dataPartitionKey);
     }
   }
 
   // a serializable helper class for common parameters required to configure writers
   private static class Context implements Serializable {
     private final Schema dataSchema;
-    private StructType dataSparkType;
+    private final StructType dataSparkType;
+    private final StructType inputDataSparkType;
     private final FileFormat dataFileFormat;
     private final long targetDataFileSize;
     private final StructType deleteSparkType;
@@ -870,18 +884,26 @@ class SparkPositionDeltaWrite implements DeltaWrite, RequiresDistributionAndOrde
 
     Context(
         Schema dataSchema,
+        Schema tableSchema,
         SparkWriteConf writeConf,
         LogicalWriteInfo info,
         SparkWriteRequirements writeRequirements) {
-      this.dataSchema = dataSchema;
-      this.dataSparkType = info.schema();
+      StructType inputType = info.schema();
       if (dataSchema != null && dataSchema.findField(MetadataColumns.ROW_ID.fieldId()) != null) {
-        dataSparkType = dataSparkType.add(MetadataColumns.ROW_ID.name(), LongType$.MODULE$);
-        dataSparkType =
-            dataSparkType.add(
-                MetadataColumns.LAST_UPDATED_SEQUENCE_NUMBER.name(), LongType$.MODULE$);
+        inputType = inputType.add(MetadataColumns.ROW_ID.name(), LongType$.MODULE$);
+        inputType =
+            inputType.add(MetadataColumns.LAST_UPDATED_SEQUENCE_NUMBER.name(), LongType$.MODULE$);
       }
 
+      this.inputDataSparkType = inputType;
+      this.dataSparkType =
+          dataSchema == null
+              ? inputType
+              : SparkTypePromotion.writeType(inputType, dataSchema, tableSchema);
+      this.dataSchema =
+          dataSchema == null || dataSparkType.equals(inputType)
+              ? dataSchema
+              : SparkSchemaUtil.convert(dataSchema, dataSparkType);
       this.dataFileFormat = writeConf.dataFileFormat();
       this.targetDataFileSize = writeConf.targetDataFileSize();
       this.deleteSparkType = info.rowIdSchema().get();
@@ -896,6 +918,10 @@ class SparkPositionDeltaWrite implements DeltaWrite, RequiresDistributionAndOrde
 
     Schema dataSchema() {
       return dataSchema;
+    }
+
+    StructType inputDataSparkType() {
+      return inputDataSparkType;
     }
 
     StructType dataSparkType() {

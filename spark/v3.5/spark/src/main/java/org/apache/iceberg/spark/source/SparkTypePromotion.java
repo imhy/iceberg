@@ -197,6 +197,14 @@ final class SparkTypePromotion {
     };
   }
 
+  static Function<InternalRow, InternalRow> rowConverter(StructType source, StructType target) {
+    if (source.equals(target)) {
+      return Function.identity();
+    }
+    Function<Object, Object> convert = converter(source, target);
+    return row -> (InternalRow) convert.apply(row);
+  }
+
   private static Function<Object, Object> converter(DataType source, DataType target) {
     if (source.equals(target)) {
       return Function.identity();
