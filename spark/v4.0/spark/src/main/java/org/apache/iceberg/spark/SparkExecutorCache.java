@@ -53,13 +53,15 @@ public class SparkExecutorCache {
   private static final Logger LOG = LoggerFactory.getLogger(SparkExecutorCache.class);
 
   private static volatile SparkExecutorCache instance = null;
+  private static final long STRING_OVERHEAD_BYTES = 48L;
 
   private final Duration timeout;
   private final long maxEntrySize;
   private final long maxTotalSize;
   private volatile Cache<String, CacheValue> state;
 
-  private SparkExecutorCache(Conf conf) {
+  @VisibleForTesting
+  SparkExecutorCache(Conf conf) {
     this.timeout = conf.timeout();
     this.maxEntrySize = conf.maxEntrySize();
     this.maxTotalSize = conf.maxTotalSize();
@@ -90,7 +92,9 @@ public class SparkExecutorCache {
     return instance;
   }
 
-  /** Returns the max entry size in bytes that will be considered for caching. */
+  /**
+   * Returns the max entry size in bytes, including its key, that will be considered for caching.
+   */
   public long maxEntrySize() {
     return maxEntrySize;
   }
@@ -105,13 +109,16 @@ public class SparkExecutorCache {
    * @return the cached or computed value
    */
   public <V> V getOrLoad(String group, String key, Supplier<V> valueSupplier, long valueSize) {
-    if (valueSize > maxEntrySize) {
-      LOG.debug("{} exceeds max entry size: {} > {}", key, valueSize, maxEntrySize);
+    // Conservatively account for UTF-16 storage, the String, and its backing array. This also
+    // covers compact strings; subtracting before adding avoids overflowing the entry estimate.
+    long keySize = STRING_OVERHEAD_BYTES + 2L * (group.length() + 1L + key.length());
+    if (keySize > maxEntrySize || valueSize > maxEntrySize - keySize) {
+      LOG.debug("{} exceeds max entry size including its key: {}", key, maxEntrySize);
       return valueSupplier.get();
     }
 
     String internalKey = group + "_" + key;
-    CacheValue value = state().get(internalKey, loadFunc(valueSupplier, valueSize));
+    CacheValue value = state().get(internalKey, loadFunc(valueSupplier, valueSize + keySize));
     Preconditions.checkNotNull(value, "Loaded value must not be null");
     return value.get();
   }
