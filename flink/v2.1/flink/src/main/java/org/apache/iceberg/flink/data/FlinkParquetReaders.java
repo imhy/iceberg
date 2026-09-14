@@ -22,6 +22,8 @@ import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -45,12 +47,15 @@ import org.apache.iceberg.parquet.ParquetVariantReaders.DelegatingValueReader;
 import org.apache.iceberg.parquet.ParquetVariantVisitor;
 import org.apache.iceberg.parquet.TypeWithSchemaVisitor;
 import org.apache.iceberg.parquet.VariantReaderBuilder;
+import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
+import org.apache.iceberg.types.TypeUtil;
 import org.apache.iceberg.types.Types;
 import org.apache.iceberg.util.ArrayUtil;
+import org.apache.iceberg.util.DateTimeUtil;
 import org.apache.parquet.column.ColumnDescriptor;
 import org.apache.parquet.io.api.Binary;
 import org.apache.parquet.schema.GroupType;
@@ -260,6 +265,16 @@ public class FlinkParquetReaders {
       @Override
       public Optional<ParquetValueReader<?>> visit(
           LogicalTypeAnnotation.DateLogicalTypeAnnotation dateLogicalType) {
+        if (expected instanceof Types.TimestampType
+            || expected instanceof Types.TimestampNanoType) {
+          Preconditions.checkArgument(
+              TypeUtil.isDateToTimestampPromotion(Types.DateType.get(), expected),
+              "Cannot promote date to %s",
+              expected);
+          ChronoUnit unit =
+              expected instanceof Types.TimestampNanoType ? ChronoUnit.NANOS : ChronoUnit.MICROS;
+          return Optional.of(new DateAsTimestampReader(desc, unit));
+        }
         return Optional.of(new ParquetValueReaders.UnboxedReader<>(desc));
       }
 
@@ -413,6 +428,24 @@ public class FlinkParquetReaders {
     @Override
     public DecimalData read(DecimalData ignored) {
       return DecimalData.fromUnscaledLong(column.nextLong(), precision, scale);
+    }
+  }
+
+  private static class DateAsTimestampReader
+      extends ParquetValueReaders.PrimitiveReader<TimestampData> {
+    private final ChronoUnit unit;
+
+    private DateAsTimestampReader(ColumnDescriptor desc, ChronoUnit unit) {
+      super(desc);
+      this.unit = unit;
+    }
+
+    @Override
+    public TimestampData read(TimestampData reuse) {
+      LocalDateTime epoch = DateTimeUtil.EPOCH.toLocalDateTime();
+      LocalDateTime midnight = DateTimeUtil.dateFromDays(column.nextInteger()).atStartOfDay();
+      long value = unit.between(epoch, midnight);
+      return TimestampData.fromLocalDateTime(epoch.plus(value, unit));
     }
   }
 
