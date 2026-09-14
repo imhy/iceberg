@@ -43,10 +43,13 @@ import org.apache.avro.io.ResolvingDecoder;
 import org.apache.avro.util.Utf8;
 import org.apache.iceberg.MetadataColumns;
 import org.apache.iceberg.common.DynConstructors;
+import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.types.Type;
+import org.apache.iceberg.types.TypeUtil;
 import org.apache.iceberg.types.Types;
+import org.apache.iceberg.util.DateTimeUtil;
 import org.apache.iceberg.util.Pair;
 import org.apache.iceberg.util.UUIDUtil;
 import org.apache.iceberg.variants.Variant;
@@ -78,6 +81,18 @@ public class ValueReaders {
 
   public static ValueReader<Long> intsAsLongs() {
     return IntegerAsLongReader.INSTANCE;
+  }
+
+  /** Reads Avro dates as zoneless timestamps, failing if a value exceeds the target range. */
+  public static ValueReader<Long> datesAsTimestamps(Type.PrimitiveType target) {
+    Preconditions.checkArgument(
+        TypeUtil.isDateToTimestampPromotion(Types.DateType.get(), target),
+        "Cannot promote date to %s",
+        target);
+    if (target.typeId() == Type.TypeID.TIMESTAMP_NANO) {
+      return (decoder, reuse) -> DateTimeUtil.nanosFromDays(decoder.readInt());
+    }
+    return (decoder, reuse) -> DateTimeUtil.microsFromDays(decoder.readInt());
   }
 
   public static ValueReader<Long> longs() {
