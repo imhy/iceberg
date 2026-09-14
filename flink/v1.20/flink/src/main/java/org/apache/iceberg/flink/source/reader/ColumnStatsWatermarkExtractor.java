@@ -102,7 +102,7 @@ public class ColumnStatsWatermarkExtractor implements SplitWatermarkExtractor, S
                   eventTimeFieldId,
                   scanTask.file());
               return timeUnit.toMillis(
-                  Conversions.fromByteBuffer(
+                  Conversions.boundFromByteBuffer(
                       Types.LongType.get(), scanTask.file().lowerBounds().get(eventTimeFieldId)));
             })
         .min(Comparator.comparingLong(l -> l))

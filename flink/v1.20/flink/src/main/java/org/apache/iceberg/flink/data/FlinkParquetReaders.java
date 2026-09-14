@@ -21,6 +21,7 @@ package org.apache.iceberg.flink.data;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
+import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -39,9 +40,11 @@ import org.apache.iceberg.parquet.ParquetSchemaUtil;
 import org.apache.iceberg.parquet.ParquetValueReader;
 import org.apache.iceberg.parquet.ParquetValueReaders;
 import org.apache.iceberg.parquet.TypeWithSchemaVisitor;
+import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
+import org.apache.iceberg.types.TypeUtil;
 import org.apache.iceberg.types.Types;
 import org.apache.iceberg.util.ArrayUtil;
 import org.apache.parquet.column.ColumnDescriptor;
@@ -223,6 +226,16 @@ public class FlinkParquetReaders {
       @Override
       public Optional<ParquetValueReader<?>> visit(
           LogicalTypeAnnotation.DateLogicalTypeAnnotation dateLogicalType) {
+        if (expected instanceof Types.TimestampType
+            || expected instanceof Types.TimestampNanoType) {
+          Preconditions.checkArgument(
+              TypeUtil.isDateToTimestampPromotion(Types.DateType.get(), expected),
+              "Cannot promote date to %s",
+              expected);
+          ChronoUnit unit =
+              expected instanceof Types.TimestampNanoType ? ChronoUnit.NANOS : ChronoUnit.MICROS;
+          return Optional.of(new DateAsTimestampReader(desc, unit));
+        }
         return Optional.of(new ParquetValueReaders.UnboxedReader<>(desc));
       }
 
@@ -376,6 +389,21 @@ public class FlinkParquetReaders {
     @Override
     public DecimalData read(DecimalData ignored) {
       return DecimalData.fromUnscaledLong(column.nextLong(), precision, scale);
+    }
+  }
+
+  private static class DateAsTimestampReader
+      extends ParquetValueReaders.PrimitiveReader<TimestampData> {
+    private final ChronoUnit unit;
+
+    private DateAsTimestampReader(ColumnDescriptor desc, ChronoUnit unit) {
+      super(desc);
+      this.unit = unit;
+    }
+
+    @Override
+    public TimestampData read(TimestampData reuse) {
+      return RowDataUtil.timestampFromDays(column.nextInteger(), unit);
     }
   }
 
