@@ -43,6 +43,7 @@ import org.apache.iceberg.io.DeleteSchemaUtil;
 import org.apache.iceberg.io.IOUtil;
 import org.apache.iceberg.io.InputFile;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
+import org.apache.iceberg.relocated.com.google.common.base.Suppliers;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.Iterables;
 import org.apache.iceberg.types.TypeUtil;
@@ -61,6 +62,7 @@ public class BaseDeleteLoader implements DeleteLoader {
 
   private final Function<DeleteFile, InputFile> loadInputFile;
   private final ExecutorService workerPool;
+  private ProjectionKey lastProjectionKey;
 
   public BaseDeleteLoader(Function<DeleteFile, InputFile> loadInputFile) {
     this(loadInputFile, ThreadPools.getDeleteWorkerPool());
@@ -99,18 +101,33 @@ public class BaseDeleteLoader implements DeleteLoader {
 
   @Override
   public StructLikeSet loadEqualityDeletes(Iterable<DeleteFile> deleteFiles, Schema projection) {
+    Supplier<String> projectionKey = projectionKey(projection);
     Iterable<Iterable<StructLike>> deletes =
-        execute(deleteFiles, deleteFile -> getOrReadEqDeletes(deleteFile, projection));
+        execute(
+            deleteFiles, deleteFile -> getOrReadEqDeletes(deleteFile, projection, projectionKey));
     StructLikeSet deleteSet = StructLikeSet.create(projection.asStruct());
     Iterables.addAll(deleteSet, Iterables.concat(deletes));
     return deleteSet;
   }
 
-  private Iterable<StructLike> getOrReadEqDeletes(DeleteFile deleteFile, Schema projection) {
+  private synchronized Supplier<String> projectionKey(Schema projection) {
+    // Retain only the latest immutable schema on this loader. Each load keeps its own supplier,
+    // so concurrent projections cannot share a key, and uncached loads never serialize it.
+    if (lastProjectionKey == null || lastProjectionKey.schema() != projection) {
+      lastProjectionKey =
+          new ProjectionKey(projection, Suppliers.memoize(() -> SchemaParser.toJson(projection)));
+    }
+    return lastProjectionKey.json();
+  }
+
+  private record ProjectionKey(Schema schema, Supplier<String> json) {}
+
+  private Iterable<StructLike> getOrReadEqDeletes(
+      DeleteFile deleteFile, Schema projection, Supplier<String> projectionKey) {
     long estimatedSize = estimateEqDeletesSize(deleteFile, projection);
     if (canCache(estimatedSize)) {
       // Cached rows depend on projected field order, promoted types, and initial defaults.
-      String cacheKey = SchemaParser.toJson(projection) + ":" + deleteFile.location();
+      String cacheKey = projectionKey.get() + ":" + deleteFile.location();
       return getOrLoad(cacheKey, () -> readEqDeletes(deleteFile, projection), estimatedSize);
     } else {
       return readEqDeletes(deleteFile, projection);

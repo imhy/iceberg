@@ -26,6 +26,9 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import java.util.stream.Stream;
@@ -37,6 +40,7 @@ import org.apache.iceberg.Table;
 import org.apache.iceberg.TestTables;
 import org.apache.iceberg.deletes.PositionDeleteIndex;
 import org.apache.iceberg.expressions.Literal;
+import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.Types;
 import org.apache.iceberg.util.Pair;
@@ -132,6 +136,36 @@ class TestDeleteLoaderCache {
       assertContains(loader, delete, projection, 1, value);
     }
     assertThat(loader.loads()).isEqualTo(2);
+  }
+
+  @Test
+  void isolatesConcurrentProjections() throws Exception {
+    Schema original = new Schema(Types.NestedField.optional(1, "value", Types.DateType.get()));
+    Table table = create(original);
+    DeleteFile delete = write(table, original, row(original, LocalDate.ofEpochDay(1)));
+    table.updateSchema().updateColumn("value", Types.TimestampType.withoutZone()).commit();
+    Schema promoted = table.schema();
+    CachingLoader loader = new CachingLoader(table, true);
+    ExecutorService workers = Executors.newFixedThreadPool(4);
+    try {
+      List<Future<?>> results = Lists.newArrayList();
+      for (int i = 0; i < 20; i++) {
+        results.add(
+            workers.submit(
+                () -> assertContains(loader, delete, original, LocalDate.ofEpochDay(1))));
+        results.add(
+            workers.submit(
+                () ->
+                    assertContains(
+                        loader, delete, promoted, LocalDate.ofEpochDay(1).atStartOfDay())));
+      }
+      for (Future<?> result : results) {
+        result.get();
+      }
+      assertThat(loader.loads()).isEqualTo(2);
+    } finally {
+      workers.shutdownNow();
+    }
   }
 
   @Test
