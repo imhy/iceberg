@@ -20,6 +20,7 @@ package org.apache.iceberg.flink.sink;
 
 import java.io.IOException;
 import java.time.temporal.ChronoUnit;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -27,9 +28,9 @@ import java.util.function.Function;
 import org.apache.flink.table.data.ArrayData;
 import org.apache.flink.table.data.GenericArrayData;
 import org.apache.flink.table.data.GenericMapData;
-import org.apache.flink.table.data.GenericRowData;
 import org.apache.flink.table.data.MapData;
 import org.apache.flink.table.data.RowData;
+import org.apache.flink.table.runtime.typeutils.RowDataSerializer;
 import org.apache.flink.table.types.logical.ArrayType;
 import org.apache.flink.table.types.logical.LogicalType;
 import org.apache.flink.table.types.logical.MapType;
@@ -99,10 +100,13 @@ final class RowDataTypePromotion {
       return writer;
     }
     Function<Object, Object> convert = converter(source, target);
+    RowDataSerializer serializer = new RowDataSerializer(source);
     return new TaskWriter<>() {
       @Override
       public void write(RowData row) throws IOException {
-        writer.write((RowData) convert.apply(row));
+        // Writers may retain rows while Flink reuses its input buffers. Copy once at the root;
+        // nested conversions then share this owned snapshot without boxing unchanged primitives.
+        writer.write((RowData) convert.apply(row == null ? null : serializer.copy(row)));
       }
 
       @Override
@@ -136,20 +140,25 @@ final class RowDataTypePromotion {
       case ROW:
         RowType fromRow = (RowType) source;
         RowType toRow = (RowType) target;
+        int[] positions = new int[fromRow.getFieldCount()];
+        Arrays.fill(positions, -1);
         List<RowData.FieldGetter> getters = Lists.newArrayList();
         List<Function<Object, Object>> conversions = Lists.newArrayList();
         for (int i = 0; i < fromRow.getFieldCount(); i++) {
-          getters.add(FlinkRowData.createFieldGetter(fromRow.getTypeAt(i), i));
-          conversions.add(converter(fromRow.getTypeAt(i), toRow.getTypeAt(i)));
+          if (!fromRow.getTypeAt(i).equals(toRow.getTypeAt(i))) {
+            positions[i] = getters.size();
+            getters.add(FlinkRowData.createFieldGetter(fromRow.getTypeAt(i), i));
+            conversions.add(converter(fromRow.getTypeAt(i), toRow.getTypeAt(i)));
+          }
         }
         convert =
             value -> {
               RowData row = (RowData) value;
-              GenericRowData result = new GenericRowData(row.getRowKind(), getters.size());
-              for (int i = 0; i < getters.size(); i++) {
-                result.setField(i, conversions.get(i).apply(getters.get(i).getFieldOrNull(row)));
+              Object[] values = new Object[getters.size()];
+              for (int i = 0; i < values.length; i++) {
+                values[i] = conversions.get(i).apply(getters.get(i).getFieldOrNull(row));
               }
-              return result;
+              return new PromotedRowData(row, positions, values);
             };
         break;
       case ARRAY:
