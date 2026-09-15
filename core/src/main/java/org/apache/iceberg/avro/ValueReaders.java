@@ -90,13 +90,9 @@ public class ValueReaders {
         "Cannot promote date to %s",
         target);
     if (target.typeId() == Type.TypeID.TIMESTAMP_NANO) {
-      return (decoder, reuse) ->
-          DateTimeUtil.nanosFromTimestamp(
-              DateTimeUtil.dateFromDays(decoder.readInt()).atStartOfDay());
+      return (decoder, reuse) -> DateTimeUtil.nanosFromDays(decoder.readInt());
     }
-    return (decoder, reuse) ->
-        DateTimeUtil.microsFromTimestamp(
-            DateTimeUtil.dateFromDays(decoder.readInt()).atStartOfDay());
+    return (decoder, reuse) -> DateTimeUtil.microsFromDays(decoder.readInt());
   }
 
   public static ValueReader<Long> longs() {

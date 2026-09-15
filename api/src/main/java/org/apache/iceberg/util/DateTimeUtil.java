@@ -38,6 +38,8 @@ public class DateTimeUtil {
   public static final long MICROS_PER_SECOND = 1_000_000L;
   private static final long NANOS_PER_SECOND = 1_000_000_000L;
   private static final long NANOS_PER_MICRO = 1_000L;
+  private static final long MICROS_PER_DAY = 86_400L * MICROS_PER_SECOND;
+  private static final long NANOS_PER_DAY = 86_400L * NANOS_PER_SECOND;
 
   private static final DateTimeFormatter FORMATTER =
       new DateTimeFormatterBuilder()
@@ -48,6 +50,16 @@ public class DateTimeUtil {
 
   public static LocalDate dateFromDays(int daysFromEpoch) {
     return ChronoUnit.DAYS.addTo(EPOCH_DAY, daysFromEpoch);
+  }
+
+  /** Returns midnight in microseconds, failing if the date exceeds the timestamp range. */
+  public static long microsFromDays(int daysFromEpoch) {
+    return Math.multiplyExact((long) daysFromEpoch, MICROS_PER_DAY);
+  }
+
+  /** Returns midnight in nanoseconds, failing if the date exceeds the timestamp range. */
+  public static long nanosFromDays(int daysFromEpoch) {
+    return Math.multiplyExact((long) daysFromEpoch, NANOS_PER_DAY);
   }
 
   public static int daysFromDate(LocalDate date) {

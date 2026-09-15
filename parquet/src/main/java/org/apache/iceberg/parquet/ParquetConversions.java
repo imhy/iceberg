@@ -94,17 +94,13 @@ class ParquetConversions {
               !((Types.TimestampType) icebergType).shouldAdjustToUTC(),
               "Cannot promote date to %s",
               icebergType);
-          return value ->
-              DateTimeUtil.microsFromTimestamp(
-                  DateTimeUtil.dateFromDays((Integer) value).atStartOfDay());
+          return value -> DateTimeUtil.microsFromDays((Integer) value);
         } else if (icebergType.typeId() == Type.TypeID.TIMESTAMP_NANO) {
           Preconditions.checkArgument(
               !((Types.TimestampNanoType) icebergType).shouldAdjustToUTC(),
               "Cannot promote date to %s",
               icebergType);
-          return value ->
-              DateTimeUtil.nanosFromTimestamp(
-                  DateTimeUtil.dateFromDays((Integer) value).atStartOfDay());
+          return value -> DateTimeUtil.nanosFromDays((Integer) value);
         }
       }
     }

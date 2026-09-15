@@ -123,9 +123,10 @@ public class InternalReader<T extends StructLike> extends BaseParquetReaders<T> 
 
     @Override
     public Long read(Long reuse) {
-      return unit.between(
-          DateTimeUtil.EPOCH.toLocalDateTime(),
-          DateTimeUtil.dateFromDays(column.nextInteger()).atStartOfDay());
+      int days = column.nextInteger();
+      return unit == ChronoUnit.NANOS
+          ? DateTimeUtil.nanosFromDays(days)
+          : DateTimeUtil.microsFromDays(days);
     }
   }
 

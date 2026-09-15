@@ -95,13 +95,9 @@ public class RowDataWrapper implements StructLike {
         if (type.isPrimitiveType()
             && TypeUtil.isDateToTimestampPromotion(Types.DateType.get(), type.asPrimitiveType())) {
           if (type.typeId() == Type.TypeID.TIMESTAMP_NANO) {
-            return (row, pos) ->
-                DateTimeUtil.nanosFromTimestamp(
-                    DateTimeUtil.dateFromDays(row.getInt(pos)).atStartOfDay());
+            return (row, pos) -> DateTimeUtil.nanosFromDays(row.getInt(pos));
           } else {
-            return (row, pos) ->
-                DateTimeUtil.microsFromTimestamp(
-                    DateTimeUtil.dateFromDays(row.getInt(pos)).atStartOfDay());
+            return (row, pos) -> DateTimeUtil.microsFromDays(row.getInt(pos));
           }
         }
         return null;

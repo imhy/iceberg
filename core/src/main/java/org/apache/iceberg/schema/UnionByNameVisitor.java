@@ -202,9 +202,7 @@ public class UnionByNameVisitor extends SchemaWithPartnerVisitor<Integer, Boolea
         && TypeUtil.isDateToTimestampPromotion(
             field.type(), existingField.type().asPrimitiveType())) {
       // The incoming DATE keeps the table's wider type, so its default must use that type too.
-      long micros =
-          DateTimeUtil.microsFromTimestamp(
-              DateTimeUtil.dateFromDays((Integer) writeDefault.value()).atStartOfDay());
+      long micros = DateTimeUtil.microsFromDays((Integer) writeDefault.value());
       writeDefault = Literal.of(micros).to(existingField.type());
     }
     boolean needsDefaultUpdate =

@@ -47,7 +47,7 @@ public class DateToTimestampNtzFunction extends UnaryUnboundFunction {
   public static class DateToTimestampNtz extends BaseScalarFunction<Long> {
     // Spark invokes this method from generated code for write distribution and ordering.
     public static long invoke(int days) {
-      return DateTimeUtil.microsFromTimestamp(DateTimeUtil.dateFromDays(days).atStartOfDay());
+      return DateTimeUtil.microsFromDays(days);
     }
 
     @Override

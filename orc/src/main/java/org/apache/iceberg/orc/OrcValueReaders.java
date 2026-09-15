@@ -18,7 +18,6 @@
  */
 package org.apache.iceberg.orc;
 
-import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -53,13 +52,12 @@ public class OrcValueReaders {
         TypeUtil.isDateToTimestampPromotion(Types.DateType.get(), target),
         "Cannot promote date to %s",
         target);
-    ChronoUnit unit =
-        target instanceof Types.TimestampNanoType ? ChronoUnit.NANOS : ChronoUnit.MICROS;
+    if (target instanceof Types.TimestampNanoType) {
+      return (vector, row) ->
+          DateTimeUtil.nanosFromDays(Math.toIntExact(((LongColumnVector) vector).vector[row]));
+    }
     return (vector, row) ->
-        unit.between(
-            DateTimeUtil.EPOCH.toLocalDateTime(),
-            DateTimeUtil.dateFromDays(Math.toIntExact(((LongColumnVector) vector).vector[row]))
-                .atStartOfDay());
+        DateTimeUtil.microsFromDays(Math.toIntExact(((LongColumnVector) vector).vector[row]));
   }
 
   public static OrcValueReader<Long> longs() {

@@ -261,9 +261,9 @@ public class VectorizedArrowReader implements VectorizedReader<VectorHolder> {
         int value = vec.getDataBuffer().getInt((long) row * Integer.BYTES);
         int days = dictionaryEncoded ? dictionary.decodeToInt(value) : value;
         long timestamp =
-            datePromotionUnit.between(
-                DateTimeUtil.EPOCH.toLocalDateTime(),
-                DateTimeUtil.dateFromDays(days).atStartOfDay());
+            datePromotionUnit == ChronoUnit.NANOS
+                ? DateTimeUtil.nanosFromDays(days)
+                : DateTimeUtil.microsFromDays(days);
         promotedDates.setSafe(row, timestamp);
       }
     }

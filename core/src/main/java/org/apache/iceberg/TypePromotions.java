@@ -84,9 +84,7 @@ class TypePromotions {
       return null;
     }
 
-    long micros =
-        DateTimeUtil.microsFromTimestamp(
-            DateTimeUtil.dateFromDays((Integer) value.value()).atStartOfDay());
+    long micros = DateTimeUtil.microsFromDays((Integer) value.value());
     return Literal.of(micros).to(target);
   }
 }

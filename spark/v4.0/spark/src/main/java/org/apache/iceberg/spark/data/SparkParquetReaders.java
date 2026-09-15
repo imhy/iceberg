@@ -388,8 +388,7 @@ public class SparkParquetReaders {
 
     @Override
     public Long read(Long reuse) {
-      return DateTimeUtil.microsFromTimestamp(
-          DateTimeUtil.dateFromDays(column.nextInteger()).atStartOfDay());
+      return DateTimeUtil.microsFromDays(column.nextInteger());
     }
   }
 

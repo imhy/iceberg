@@ -183,8 +183,7 @@ public class Conversions {
               !((Types.TimestampType) type).shouldAdjustToUTC(),
               "Cannot promote date bound to %s",
               type);
-          return DateTimeUtil.microsFromTimestamp(
-              DateTimeUtil.dateFromDays(tmp.getInt()).atStartOfDay());
+          return DateTimeUtil.microsFromDays(tmp.getInt());
         }
         return tmp.getLong();
       case TIMESTAMP_NANO:
@@ -193,8 +192,7 @@ public class Conversions {
               !((Types.TimestampNanoType) type).shouldAdjustToUTC(),
               "Cannot promote date bound to %s",
               type);
-          return DateTimeUtil.nanosFromTimestamp(
-              DateTimeUtil.dateFromDays(tmp.getInt()).atStartOfDay());
+          return DateTimeUtil.nanosFromDays(tmp.getInt());
         }
         return tmp.getLong();
       case FLOAT:
