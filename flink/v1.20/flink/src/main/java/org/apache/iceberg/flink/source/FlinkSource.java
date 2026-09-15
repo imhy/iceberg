@@ -45,6 +45,7 @@ import org.apache.iceberg.flink.util.FlinkCompatibilityUtil;
 import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
+import org.apache.iceberg.types.TypeUtil;
 import org.apache.iceberg.util.PropertyUtil;
 
 /**
@@ -261,8 +262,8 @@ public class FlinkSource {
         contextBuilder.project(icebergSchema);
       } else {
         contextBuilder.project(
-            FlinkReadSchema.withDefaults(
-                icebergSchema, FlinkSchemaUtil.convert(icebergSchema, projectedSchema)));
+            TypeUtil.reassignDefaults(
+                FlinkSchemaUtil.convert(icebergSchema, projectedSchema), icebergSchema));
       }
 
       contextBuilder.exposeLocality(
