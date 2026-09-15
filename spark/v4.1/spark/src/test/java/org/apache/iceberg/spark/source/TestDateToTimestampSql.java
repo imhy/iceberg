@@ -23,11 +23,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.nio.file.Path;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
 import java.util.stream.Stream;
+import org.apache.iceberg.FileScanTask;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.expressions.Literal;
+import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.spark.Spark3Util;
 import org.apache.iceberg.spark.TestBase;
 import org.apache.iceberg.types.Types;
@@ -35,6 +38,7 @@ import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.RowFactory;
 import org.apache.spark.sql.SparkSession;
+import org.apache.spark.sql.execution.SparkPlan;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -45,6 +49,7 @@ import org.junit.jupiter.api.parallel.ExecutionMode;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import scala.collection.JavaConverters;
 
 @Execution(ExecutionMode.SAME_THREAD)
 class TestDateToTimestampSql {
@@ -231,6 +236,61 @@ class TestDateToTimestampSql {
             sql("SELECT id FROM %s WHERE s.d < TIMESTAMP_NTZ '1970-01-01 00:00:00'")
                 .collectAsList())
         .containsExactly(RowFactory.create(1));
+  }
+
+  static Stream<Arguments> metricsModes() {
+    // Avro writers do not record column bounds; its SQL reader coverage uses modes().
+    return modes().filter(args -> !args.get()[0].equals("avro"));
+  }
+
+  @ParameterizedTest
+  @MethodSource("metricsModes")
+  void prunesMixedFilesUsingPromotedManifestBounds(String format, boolean vectorized, String zone)
+      throws Exception {
+    spark.conf().set("spark.sql.session.timeZone", zone);
+    createTable("id INT, d DATE", "", format, vectorized);
+    sql("ALTER TABLE %s SET TBLPROPERTIES ('write.metadata.metrics.default'='full')");
+    spark
+        .sql("SELECT 1 AS id, DATE '1969-12-31' AS d UNION ALL SELECT 2, DATE '1970-01-01'")
+        .coalesce(1)
+        .writeTo(tableName)
+        .append();
+    sql("ALTER TABLE %s ALTER COLUMN d TYPE TIMESTAMP_NTZ");
+    sql("REFRESH TABLE %s");
+    spark
+        .sql("SELECT 3 AS id, TIMESTAMP_NTZ '2021-03-14 01:30:00.123456' AS d")
+        .coalesce(1)
+        .writeTo(tableName)
+        .append();
+
+    Table table = Spark3Util.loadIcebergTable(spark, tableName);
+    int fieldId = table.schema().findField("d").fieldId();
+    try (CloseableIterable<FileScanTask> files = table.newScan().includeColumnStats().planFiles()) {
+      // Assert the raw mixed-width bounds exist: residual filtering alone cannot validate them.
+      assertThat(files)
+          .extracting(task -> task.file().lowerBounds().get(fieldId).remaining())
+          .containsExactlyInAnyOrder(Integer.BYTES, Long.BYTES);
+    }
+    try (CloseableIterable<FileScanTask> files = table.newScan().includeColumnStats().planFiles()) {
+      assertThat(files)
+          .extracting(task -> task.file().upperBounds().get(fieldId).remaining())
+          .containsExactlyInAnyOrder(Integer.BYTES, Long.BYTES);
+    }
+    checkSingleFileQuery("SELECT id FROM %s WHERE d = TIMESTAMP_NTZ '1969-12-31 00:00:00'", 1);
+    checkSingleFileQuery(
+        "SELECT id FROM %s WHERE d = TIMESTAMP_NTZ '2021-03-14 01:30:00.123456'", 3);
+  }
+
+  private void checkSingleFileQuery(String query, int expectedId) {
+    Dataset<Row> result = sql(query);
+    assertThat(result.collectAsList()).containsExactly(RowFactory.create(expectedId));
+    List<SparkPlan> leaves =
+        JavaConverters.seqAsJavaListConverter(
+                result.queryExecution().executedPlan().collectLeaves())
+            .asJava();
+    assertThat(leaves).hasSize(1);
+    assertThat(JavaConverters.mapAsJavaMapConverter(leaves.get(0).metrics()).asJava())
+        .hasEntrySatisfying("resultDataFiles", metric -> assertThat(metric.value()).isEqualTo(1L));
   }
 
   private static LocalDateTime midnight(String date) {
