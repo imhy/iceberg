@@ -59,14 +59,29 @@ class TestDateToTimestampSqlDefaults {
                     .flatMap(
                         precision ->
                             Stream.of(false, true)
-                                .map(modern -> Arguments.of(format, precision, modern))));
+                                .flatMap(
+                                    source ->
+                                        Stream.of(false, true)
+                                            // Cross-mode coverage uses Parquet; all formats run
+                                            // both paired modes in both time zones.
+                                            .filter(
+                                                sink ->
+                                                    source == sink || format == FileFormat.PARQUET)
+                                            .flatMap(
+                                                sink ->
+                                                    Stream.of("UTC", "America/Los_Angeles")
+                                                        .map(
+                                                            zone ->
+                                                                Arguments.of(
+                                                                    format, precision, source, sink,
+                                                                    zone))))));
   }
 
   @ParameterizedTest
   @MethodSource("modes")
   void readsPromotedInitialDefaultsAndPreservesExplicitNulls(
-      FileFormat format, int precision, boolean modern) {
-    TableEnvironment env = createEnvironment(modern);
+      FileFormat format, int precision, boolean source, boolean sink, String zone) {
+    TableEnvironment env = createEnvironment(source, sink, zone);
     sql(
         env,
         "CREATE TABLE t (id INT) WITH ('format-version'='3', 'write.format.default'='%s')",
@@ -114,8 +129,9 @@ class TestDateToTimestampSqlDefaults {
 
   @ParameterizedTest
   @MethodSource("modes")
-  void readsNestedPromotedDefaults(FileFormat format, int precision, boolean modern) {
-    TableEnvironment env = createEnvironment(modern);
+  void readsNestedPromotedDefaults(
+      FileFormat format, int precision, boolean source, boolean sink, String zone) {
+    TableEnvironment env = createEnvironment(source, sink, zone);
     sql(
         env,
         "CREATE TABLE t (id INT, s ROW<x INT>, a ARRAY<ROW<x INT>>, m MAP<STRING, ROW<x INT>>) "
@@ -157,14 +173,14 @@ class TestDateToTimestampSqlDefaults {
         .containsExactly(Row.of(1));
   }
 
-  private static TableEnvironment createEnvironment(boolean modern) {
+  private static TableEnvironment createEnvironment(boolean source, boolean sink, String zone) {
     TableEnvironment env = TableEnvironment.create(EnvironmentSettings.inBatchMode());
-    env.getConfig().setLocalTimeZone(ZoneId.of(modern ? "America/Los_Angeles" : "UTC"));
+    env.getConfig().setLocalTimeZone(ZoneId.of(zone));
     env.getConfig()
         .getConfiguration()
         .set(CoreOptions.DEFAULT_PARALLELISM, 1)
-        .set(FlinkConfigOptions.TABLE_EXEC_ICEBERG_USE_FLIP27_SOURCE, modern)
-        .set(FlinkConfigOptions.TABLE_EXEC_ICEBERG_USE_V2_SINK, modern);
+        .set(FlinkConfigOptions.TABLE_EXEC_ICEBERG_USE_FLIP27_SOURCE, source)
+        .set(FlinkConfigOptions.TABLE_EXEC_ICEBERG_USE_V2_SINK, sink);
     sql(
         env,
         "CREATE CATALOG promotion WITH ('type'='iceberg', 'catalog-type'='hadoop', "
