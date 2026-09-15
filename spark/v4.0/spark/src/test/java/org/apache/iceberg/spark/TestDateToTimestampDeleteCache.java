@@ -18,14 +18,15 @@
  */
 package org.apache.iceberg.spark;
 
+import static org.apache.iceberg.Files.localOutput;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.stream.Stream;
 import org.apache.iceberg.DeleteFile;
-import org.apache.iceberg.Files;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.data.FileHelpers;
@@ -92,7 +93,8 @@ class TestDateToTimestampDeleteCache {
             + "', 'write.delete.format.default'='"
             + format
             + "')");
-    assertThat(temp.resolve("db/t_" + format + "_" + cache + "/data").toFile().mkdirs()).isTrue();
+    // Concurrent local writers can race while creating their common parent directory.
+    Files.createDirectories(temp.resolve("db/t_" + format + "_" + cache + "/data"));
     sql(
         "INSERT INTO local.db.t VALUES (1, 7, DATE '1970-01-02'), (2, 8, DATE '1970-01-02'), "
             + "(3, 7, DATE '1969-12-31'), (4, 7, CAST(NULL AS DATE))");
@@ -102,7 +104,7 @@ class TestDateToTimestampDeleteCache {
     DeleteFile deleteFile =
         FileHelpers.writeDeleteFile(
             table,
-            Files.localOutput(temp.resolve("deletes." + format).toString()),
+            localOutput(temp.resolve("deletes." + format).toString()),
             List.of(
                 delete.copy("d", LocalDate.ofEpochDay(1), "a", 7), delete.copy("d", null, "a", 7)),
             deleteSchema);
