@@ -85,8 +85,46 @@ class TestSearchArgumentNulls {
     assertThat(evaluate(type, filter, false).isNeeded()).isTrue();
   }
 
+  @ParameterizedTest
+  @MethodSource("types")
+  void prunesNonMatchingRangesWhenStatisticsExcludeNulls(Type.PrimitiveType type) {
+    for (Expression predicate :
+        List.of(Expressions.lessThan("v", 1L), Expressions.lessThanOrEqual("v", 1L))) {
+      assertThat(evaluate(type, predicate, TruthValue.NO, TruthValue.NO, false).isNeeded())
+          .isFalse();
+      assertThat(
+              evaluate(type, Expressions.not(predicate), TruthValue.NO, TruthValue.NO, false)
+                  .isNeeded())
+          .isTrue();
+    }
+    Expression negatedDisjunction =
+        Expressions.not(Expressions.or(Expressions.equal("v", 0L), Expressions.equal("id", 7)));
+    assertThat(evaluate(type, negatedDisjunction, TruthValue.NO, TruthValue.YES, false).isNeeded())
+        .isFalse();
+  }
+
+  @ParameterizedTest
+  @MethodSource("types")
+  void retainsPossibleNullMatchesWhenNullStatisticsAreUnknown(Type.PrimitiveType type) {
+    for (Expression predicate :
+        List.of(Expressions.lessThan("v", 1L), Expressions.lessThanOrEqual("v", 1L))) {
+      // The range cannot match, but absent null statistics do not prove the stripe has no nulls.
+      assertThat(evaluate(type, predicate, TruthValue.YES_NO, TruthValue.NO, false).isNeeded())
+          .isTrue();
+    }
+  }
+
   private static TruthValue evaluate(
       Type.PrimitiveType type, Expression filter, boolean idMatches) {
+    return evaluate(type, filter, TruthValue.YES, TruthValue.NULL, idMatches);
+  }
+
+  private static TruthValue evaluate(
+      Type.PrimitiveType type,
+      Expression filter,
+      TruthValue nulls,
+      TruthValue comparison,
+      boolean idMatches) {
     Schema schema =
         new Schema(
             Types.NestedField.optional(1, "v", type),
@@ -99,11 +137,9 @@ class TestSearchArgumentNulls {
             .map(
                 leaf -> {
                   if (leaf.getColumnName().equals("`v`")) {
-                    // Statistics for an all-null column: IS NULL is true, ordinary SQL comparisons
-                    // are NULL.
                     return leaf.getOperator() == PredicateLeaf.Operator.IS_NULL
-                        ? TruthValue.YES
-                        : TruthValue.NULL;
+                        ? nulls
+                        : comparison;
                   }
                   if (leaf.getOperator() == PredicateLeaf.Operator.IS_NULL) {
                     return TruthValue.NO;

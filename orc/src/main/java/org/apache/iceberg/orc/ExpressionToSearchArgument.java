@@ -53,6 +53,8 @@ class ExpressionToSearchArgument
     Schema physicalSchema = ORCSchemaUtil.convert(readSchema);
     Map<Integer, String> idToColumnName = ORCSchemaUtil.idToOrcName(physicalSchema);
     SearchArgument.Builder builder = SearchArgumentFactory.newBuilder();
+    // Rewrite NOT using Iceberg's expression contract before translating leaves to SQL semantics.
+    // Negating a SQL comparison directly can discard null rows that Iceberg's Evaluator retains.
     ExpressionVisitors.visit(
             Expressions.rewriteNot(expr),
             new ExpressionToSearchArgument(
