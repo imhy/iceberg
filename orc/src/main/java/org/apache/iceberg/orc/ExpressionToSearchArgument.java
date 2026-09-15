@@ -22,7 +22,6 @@ import java.math.BigDecimal;
 import java.sql.Date;
 import java.sql.Timestamp;
 import java.time.LocalDate;
-import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import org.apache.iceberg.Schema;
@@ -34,6 +33,7 @@ import org.apache.iceberg.expressions.ExpressionVisitors;
 import org.apache.iceberg.expressions.Expressions;
 import org.apache.iceberg.expressions.Literal;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableSet;
+import org.apache.iceberg.relocated.com.google.common.collect.Sets;
 import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.Type.TypeID;
 import org.apache.iceberg.types.TypeUtil;
@@ -84,7 +84,7 @@ class ExpressionToSearchArgument
   }
 
   private static Set<Integer> defaultFieldIds(TypeDescription schema) {
-    Set<Integer> ids = new HashSet<>();
+    Set<Integer> ids = Sets.newHashSet();
     collectDefaultFieldIds(schema, ids);
     return ids;
   }

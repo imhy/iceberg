@@ -18,10 +18,10 @@
  */
 package org.apache.iceberg.flink.source;
 
-import java.util.ArrayList;
 import java.util.List;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
+import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.Types;
 
@@ -37,7 +37,7 @@ final class FlinkReadSchema {
   private static Type copyDefaults(Schema tableSchema, Type type) {
     return switch (type.typeId()) {
       case STRUCT -> {
-        List<Types.NestedField> fields = new ArrayList<>();
+        List<Types.NestedField> fields = Lists.newArrayList();
         for (Types.NestedField field : type.asStructType().fields()) {
           Types.NestedField tableField = tableSchema.findField(field.fieldId());
           Preconditions.checkNotNull(

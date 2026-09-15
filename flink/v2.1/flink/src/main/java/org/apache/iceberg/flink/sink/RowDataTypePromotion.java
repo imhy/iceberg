@@ -21,7 +21,6 @@ package org.apache.iceberg.flink.sink;
 import java.io.IOException;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -42,6 +41,7 @@ import org.apache.iceberg.flink.FlinkRowData;
 import org.apache.iceberg.flink.FlinkSchemaUtil;
 import org.apache.iceberg.io.TaskWriter;
 import org.apache.iceberg.io.WriteResult;
+import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.TypeUtil;
 import org.apache.iceberg.types.Types;
@@ -67,7 +67,7 @@ final class RowDataTypePromotion {
         if (!target.isStructType()) {
           return source;
         }
-        List<RowType.RowField> fields = new ArrayList<>();
+        List<RowType.RowField> fields = Lists.newArrayList();
         for (RowType.RowField field : ((RowType) source).getFields()) {
           Types.NestedField targetField = target.asStructType().field(field.getName());
           fields.add(
@@ -144,8 +144,8 @@ final class RowDataTypePromotion {
       case ROW:
         RowType fromRow = (RowType) source;
         RowType toRow = (RowType) target;
-        List<RowData.FieldGetter> getters = new ArrayList<>();
-        List<Function<Object, Object>> conversions = new ArrayList<>();
+        List<RowData.FieldGetter> getters = Lists.newArrayList();
+        List<Function<Object, Object>> conversions = Lists.newArrayList();
         for (int i = 0; i < fromRow.getFieldCount(); i++) {
           getters.add(FlinkRowData.createFieldGetter(fromRow.getTypeAt(i), i));
           conversions.add(converter(fromRow.getTypeAt(i), toRow.getTypeAt(i)));

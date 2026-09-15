@@ -19,11 +19,11 @@
 package org.apache.iceberg.spark.source;
 
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.function.Function;
 import org.apache.iceberg.Schema;
+import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.spark.functions.DateToTimestampNtzFunction.DateToTimestampNtz;
 import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.TypeUtil;
@@ -74,19 +74,7 @@ final class SparkTypePromotion {
       return DataTypes.TimestampNTZType;
     }
     if (sparkType instanceof StructType struct && target.isStructType()) {
-      StructField[] fields = struct.fields().clone();
-      for (int i = 0; i < fields.length; i++) {
-        Types.NestedField from = input.asStructType().fields().get(i);
-        Types.NestedField to = target.asStructType().field(from.fieldId());
-        StructField field = fields[i];
-        fields[i] =
-            new StructField(
-                field.name(),
-                promoteType(field.dataType(), from.type(), to == null ? null : to.type()),
-                field.nullable(),
-                field.metadata());
-      }
-      return new StructType(fields);
+      return promoteStruct(struct, input.asStructType(), target.asStructType());
     } else if (sparkType instanceof ArrayType array && target.isListType()) {
       return DataTypes.createArrayType(
           promoteType(
@@ -102,6 +90,23 @@ final class SparkTypePromotion {
           map.valueContainsNull());
     }
     return sparkType;
+  }
+
+  private static StructType promoteStruct(
+      StructType struct, Types.StructType input, Types.StructType target) {
+    StructField[] fields = struct.fields().clone();
+    for (int i = 0; i < fields.length; i++) {
+      Types.NestedField from = input.fields().get(i);
+      Types.NestedField to = target.field(from.fieldId());
+      StructField field = fields[i];
+      fields[i] =
+          new StructField(
+              field.name(),
+              promoteType(field.dataType(), from.type(), to == null ? null : to.type()),
+              field.nullable(),
+              field.metadata());
+    }
+    return new StructType(fields);
   }
 
   static Distribution distribution(Distribution distribution, Schema input, Schema target) {
@@ -132,20 +137,7 @@ final class SparkTypePromotion {
       return expr;
     }
     if (expr instanceof NamedReference ref) {
-      Type type = target.asStruct();
-      Types.NestedField field = null;
-      for (String name : ref.fieldNames()) {
-        if (!type.isStructType() || (field = type.asStructType().field(name)) == null) {
-          return expr;
-        }
-        type = field.type();
-      }
-      Type source = field == null ? null : input.findType(field.fieldId());
-      if (source != null
-          && type.isPrimitiveType()
-          && TypeUtil.isDateToTimestampPromotion(source, type.asPrimitiveType())) {
-        return Expressions.apply("date_to_timestamp_ntz", expr);
-      }
+      return promoteReference(ref, input, target);
     } else if (expr instanceof Transform transform) {
       Expression[] args = transform.arguments();
       Expression[] promoted =
@@ -161,6 +153,28 @@ final class SparkTypePromotion {
       }
     }
     return expr;
+  }
+
+  private static Expression promoteReference(NamedReference ref, Schema input, Schema target) {
+    Type type = target.asStruct();
+    Types.NestedField field = null;
+    for (String name : ref.fieldNames()) {
+      if (!type.isStructType()) {
+        return ref;
+      }
+      field = type.asStructType().field(name);
+      if (field == null) {
+        return ref;
+      }
+      type = field.type();
+    }
+    Type source = field == null ? null : input.findType(field.fieldId());
+    if (source != null
+        && type.isPrimitiveType()
+        && TypeUtil.isDateToTimestampPromotion(source, type.asPrimitiveType())) {
+      return Expressions.apply("date_to_timestamp_ntz", ref);
+    }
+    return ref;
   }
 
   static DataWriter<InternalRow> wrap(
@@ -213,24 +227,7 @@ final class SparkTypePromotion {
     if (DataTypes.DateType.equals(source) && DataTypes.TimestampNTZType.equals(target)) {
       convert = value -> DateToTimestampNtz.invoke((Integer) value);
     } else if (source instanceof StructType from && target instanceof StructType to) {
-      StructField[] fields = from.fields();
-      List<Function<Object, Object>> conversions = new ArrayList<>();
-      for (int i = 0; i < fields.length; i++) {
-        conversions.add(converter(fields[i].dataType(), to.fields()[i].dataType()));
-      }
-      convert =
-          value -> {
-            InternalRow row = (InternalRow) value;
-            // Row lineage fields, when requested, are appended by the delegate writer.
-            Object[] result = new Object[row.numFields()];
-            for (int i = 0; i < result.length; i++) {
-              result[i] =
-                  conversions
-                      .get(i)
-                      .apply(row.isNullAt(i) ? null : row.get(i, fields[i].dataType()));
-            }
-            return new GenericInternalRow(result);
-          };
+      convert = structConverter(from, to);
     } else if (source instanceof ArrayType from && target instanceof ArrayType to) {
       Function<Object, Object> element = converter(from.elementType(), to.elementType());
       convert = value -> convertArray((ArrayData) value, from.elementType(), element);
@@ -248,6 +245,24 @@ final class SparkTypePromotion {
       throw new IllegalArgumentException("Cannot promote input type: " + source);
     }
     return value -> value == null ? null : convert.apply(value);
+  }
+
+  private static Function<Object, Object> structConverter(StructType from, StructType to) {
+    StructField[] fields = from.fields();
+    List<Function<Object, Object>> conversions = Lists.newArrayList();
+    for (int i = 0; i < fields.length; i++) {
+      conversions.add(converter(fields[i].dataType(), to.fields()[i].dataType()));
+    }
+    return value -> {
+      InternalRow row = (InternalRow) value;
+      // Row lineage fields, when requested, are appended by the delegate writer.
+      Object[] result = new Object[row.numFields()];
+      for (int i = 0; i < result.length; i++) {
+        result[i] =
+            conversions.get(i).apply(row.isNullAt(i) ? null : row.get(i, fields[i].dataType()));
+      }
+      return new GenericInternalRow(result);
+    };
   }
 
   private static ArrayData convertArray(
