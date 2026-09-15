@@ -66,21 +66,7 @@ class TestDateToTimestampSqlDefaults {
   @MethodSource("modes")
   void readsPromotedInitialDefaultsAndPreservesExplicitNulls(
       FileFormat format, int precision, boolean modern) {
-    TableEnvironment env = TableEnvironment.create(EnvironmentSettings.inBatchMode());
-    env.getConfig().setLocalTimeZone(ZoneId.of(modern ? "America/Los_Angeles" : "UTC"));
-    env.getConfig()
-        .getConfiguration()
-        .set(CoreOptions.DEFAULT_PARALLELISM, 1)
-        .set(FlinkConfigOptions.TABLE_EXEC_ICEBERG_USE_FLIP27_SOURCE, modern)
-        .set(FlinkConfigOptions.TABLE_EXEC_ICEBERG_USE_V2_SINK, modern);
-    sql(
-        env,
-        "CREATE CATALOG promotion WITH ('type'='iceberg', 'catalog-type'='hadoop', "
-            + "'warehouse'='%s', 'cache-enabled'='false')",
-        CATALOG.warehouse());
-    sql(env, "USE CATALOG promotion");
-    sql(env, "CREATE DATABASE db");
-    sql(env, "USE db");
+    TableEnvironment env = createEnvironment(modern);
     sql(
         env,
         "CREATE TABLE t (id INT) WITH ('format-version'='3', 'write.format.default'='%s')",
@@ -129,21 +115,7 @@ class TestDateToTimestampSqlDefaults {
   @ParameterizedTest
   @MethodSource("modes")
   void readsNestedPromotedDefaults(FileFormat format, int precision, boolean modern) {
-    TableEnvironment env = TableEnvironment.create(EnvironmentSettings.inBatchMode());
-    env.getConfig().setLocalTimeZone(ZoneId.of(modern ? "America/Los_Angeles" : "UTC"));
-    env.getConfig()
-        .getConfiguration()
-        .set(CoreOptions.DEFAULT_PARALLELISM, 1)
-        .set(FlinkConfigOptions.TABLE_EXEC_ICEBERG_USE_FLIP27_SOURCE, modern)
-        .set(FlinkConfigOptions.TABLE_EXEC_ICEBERG_USE_V2_SINK, modern);
-    sql(
-        env,
-        "CREATE CATALOG promotion WITH ('type'='iceberg', 'catalog-type'='hadoop', "
-            + "'warehouse'='%s', 'cache-enabled'='false')",
-        CATALOG.warehouse());
-    sql(env, "USE CATALOG promotion");
-    sql(env, "CREATE DATABASE db");
-    sql(env, "USE db");
+    TableEnvironment env = createEnvironment(modern);
     sql(
         env,
         "CREATE TABLE t (id INT, s ROW<x INT>, a ARRAY<ROW<x INT>>, m MAP<STRING, ROW<x INT>>) "
@@ -183,6 +155,25 @@ class TestDateToTimestampSqlDefaults {
             Row.of(2, null, null, null));
     assertThat(sql(env, "SELECT id FROM t WHERE s.d = TIMESTAMP '1969-12-31 00:00:00'"))
         .containsExactly(Row.of(1));
+  }
+
+  private static TableEnvironment createEnvironment(boolean modern) {
+    TableEnvironment env = TableEnvironment.create(EnvironmentSettings.inBatchMode());
+    env.getConfig().setLocalTimeZone(ZoneId.of(modern ? "America/Los_Angeles" : "UTC"));
+    env.getConfig()
+        .getConfiguration()
+        .set(CoreOptions.DEFAULT_PARALLELISM, 1)
+        .set(FlinkConfigOptions.TABLE_EXEC_ICEBERG_USE_FLIP27_SOURCE, modern)
+        .set(FlinkConfigOptions.TABLE_EXEC_ICEBERG_USE_V2_SINK, modern);
+    sql(
+        env,
+        "CREATE CATALOG promotion WITH ('type'='iceberg', 'catalog-type'='hadoop', "
+            + "'warehouse'='%s', 'cache-enabled'='false')",
+        CATALOG.warehouse());
+    sql(env, "USE CATALOG promotion");
+    sql(env, "CREATE DATABASE db");
+    sql(env, "USE db");
+    return env;
   }
 
   private static List<Row> sql(TableEnvironment env, String query, Object... args) {
