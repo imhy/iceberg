@@ -30,7 +30,6 @@ import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.TypeUtil;
 import org.apache.iceberg.types.Types;
 import org.apache.spark.sql.catalyst.InternalRow;
-import org.apache.spark.sql.catalyst.expressions.GenericInternalRow;
 import org.apache.spark.sql.catalyst.util.ArrayBasedMapData;
 import org.apache.spark.sql.catalyst.util.ArrayData;
 import org.apache.spark.sql.catalyst.util.GenericArrayData;
@@ -222,7 +221,8 @@ final class SparkTypePromotion {
       return Function.identity();
     }
     Function<Object, Object> convert = converter(source, target);
-    return row -> (InternalRow) convert.apply(row);
+    // Nested views share this owned snapshot; copy reused input only once at the root.
+    return row -> (InternalRow) convert.apply(row == null ? null : row.copy());
   }
 
   private static Function<Object, Object> converter(DataType source, DataType target) {
@@ -260,9 +260,16 @@ final class SparkTypePromotion {
         from.fields().length,
         to.fields().length);
     StructField[] fields = from.fields();
+    int[] positions = new int[fields.length];
+    Arrays.fill(positions, -1);
+    List<Integer> changed = Lists.newArrayList();
     List<Function<Object, Object>> conversions = Lists.newArrayList();
     for (int i = 0; i < fields.length; i++) {
-      conversions.add(converter(fields[i].dataType(), to.fields()[i].dataType()));
+      if (!fields[i].dataType().equals(to.fields()[i].dataType())) {
+        positions[i] = changed.size();
+        changed.add(i);
+        conversions.add(converter(fields[i].dataType(), to.fields()[i].dataType()));
+      }
     }
     return value -> {
       InternalRow row = (InternalRow) value;
@@ -271,12 +278,15 @@ final class SparkTypePromotion {
           "Input row does not match the schema field count: %s != %s",
           row.numFields(),
           fields.length);
-      Object[] result = new Object[fields.length];
-      for (int i = 0; i < result.length; i++) {
-        result[i] =
-            conversions.get(i).apply(row.isNullAt(i) ? null : row.get(i, fields[i].dataType()));
+      Object[] values = new Object[changed.size()];
+      for (int i = 0; i < values.length; i++) {
+        int pos = changed.get(i);
+        values[i] =
+            conversions
+                .get(i)
+                .apply(row.isNullAt(pos) ? null : row.get(pos, fields[pos].dataType()));
       }
-      return new GenericInternalRow(result);
+      return new PromotedInternalRow(row, to.fields(), positions, values);
     };
   }
 
