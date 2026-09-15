@@ -826,7 +826,7 @@ class SparkPositionDeltaWrite implements DeltaWrite, RequiresDistributionAndOrde
       this.dataSchema =
           dataSchema == null || dataSparkType.equals(inputType)
               ? dataSchema
-              : SparkSchemaUtil.convert(dataSchema, dataSparkType);
+              : SparkWriteSchema.promote(dataSchema, tableSchema);
       this.dataFileFormat = writeConf.dataFileFormat();
       this.targetDataFileSize = writeConf.targetDataFileSize();
       this.deleteSparkType = info.rowIdSchema().get();

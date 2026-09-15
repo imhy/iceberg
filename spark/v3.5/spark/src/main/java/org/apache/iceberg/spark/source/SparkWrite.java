@@ -55,7 +55,6 @@ import org.apache.iceberg.io.RollingDataWriter;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.spark.CommitMetadata;
 import org.apache.iceberg.spark.FileRewriteCoordinator;
-import org.apache.iceberg.spark.SparkSchemaUtil;
 import org.apache.iceberg.spark.SparkWriteConf;
 import org.apache.iceberg.spark.SparkWriteRequirements;
 import org.apache.iceberg.util.ContentFileUtil;
@@ -725,7 +724,7 @@ abstract class SparkWrite implements Write, RequiresDistributionAndOrdering {
       Schema outputSchema =
           outputType.equals(dsSchema)
               ? writeSchema
-              : SparkSchemaUtil.convert(writeSchema, outputType);
+              : SparkWriteSchema.promote(writeSchema, table.schema());
       SparkFileWriterFactory writerFactory =
           SparkFileWriterFactory.builderFor(table)
               .dataFileFormat(format)

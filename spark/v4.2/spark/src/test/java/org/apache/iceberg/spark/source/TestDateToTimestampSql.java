@@ -163,11 +163,13 @@ class TestDateToTimestampSql {
     spark.sql("REFRESH TABLE local.db.t");
     spark.sql("INSERT INTO local.db.t (id) VALUES (2)");
     spark.sql("INSERT INTO local.db.t (id, d) VALUES (3, NULL)");
+    spark.sql("INSERT INTO local.db.t (id, d) VALUES (4, DATE '2020-01-02')");
     assertThat(spark.sql("SELECT id, d, r FROM local.db.t ORDER BY id").collectAsList())
         .containsExactly(
             RowFactory.create(1, midnight("1969-12-31"), midnight("1969-12-31")),
             RowFactory.create(2, midnight("2021-03-14"), midnight("2021-03-14")),
-            RowFactory.create(3, null, midnight("2021-03-14")));
+            RowFactory.create(3, null, midnight("2021-03-14")),
+            RowFactory.create(4, midnight("2020-01-02"), midnight("2021-03-14")));
     assertThat(
             spark
                 .sql(

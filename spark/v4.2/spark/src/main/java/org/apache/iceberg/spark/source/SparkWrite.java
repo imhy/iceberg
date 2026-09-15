@@ -58,7 +58,6 @@ import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.spark.CommitMetadata;
 import org.apache.iceberg.spark.FileRewriteCoordinator;
-import org.apache.iceberg.spark.SparkSchemaUtil;
 import org.apache.iceberg.spark.SparkWriteConf;
 import org.apache.iceberg.spark.SparkWriteRequirements;
 import org.apache.iceberg.spark.SparkWriteUtil;
@@ -761,7 +760,7 @@ abstract class SparkWrite extends BaseSparkWrite implements Write, RequiresDistr
       Schema outputSchema =
           outputType.equals(dsSchema)
               ? writeSchema
-              : SparkSchemaUtil.convert(writeSchema, outputType);
+              : SparkWriteSchema.promote(writeSchema, table.schema());
       SparkFileWriterFactory writerFactory =
           SparkFileWriterFactory.builderFor(table)
               .dataFileFormat(format)

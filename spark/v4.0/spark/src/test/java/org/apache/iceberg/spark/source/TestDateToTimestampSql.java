@@ -167,6 +167,9 @@ class TestDateToTimestampSql {
     spark.sql("REFRESH TABLE local.db.t");
     assertThatThrownBy(() -> spark.sql("INSERT INTO local.db.t (id) VALUES (2)"))
         .hasMessageContaining("Cannot find data for the output column");
+    assertThatThrownBy(
+            () -> spark.sql("INSERT INTO local.db.t (id, d) VALUES (4, DATE '2020-01-02')"))
+        .hasMessageContaining("Cannot find data for the output column");
     spark.sql(
         "INSERT INTO local.db.t VALUES (2, TIMESTAMP_NTZ '2021-03-14 00:00:00', "
             + "TIMESTAMP_NTZ '2021-03-14 00:00:00'), (3, NULL, TIMESTAMP_NTZ '2021-03-14 00:00:00')");
