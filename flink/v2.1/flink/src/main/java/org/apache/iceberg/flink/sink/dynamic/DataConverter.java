@@ -18,7 +18,6 @@
  */
 package org.apache.iceberg.flink.sink.dynamic;
 
-import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.Map;
 import org.apache.flink.table.data.ArrayData;
@@ -28,15 +27,14 @@ import org.apache.flink.table.data.GenericMapData;
 import org.apache.flink.table.data.GenericRowData;
 import org.apache.flink.table.data.MapData;
 import org.apache.flink.table.data.RowData;
-import org.apache.flink.table.data.TimestampData;
 import org.apache.flink.table.types.logical.ArrayType;
 import org.apache.flink.table.types.logical.DecimalType;
 import org.apache.flink.table.types.logical.LogicalType;
 import org.apache.flink.table.types.logical.MapType;
 import org.apache.flink.table.types.logical.RowType;
 import org.apache.flink.table.types.logical.TimestampType;
+import org.apache.iceberg.flink.data.RowDataUtil;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
-import org.apache.iceberg.util.DateTimeUtil;
 
 /**
  * {@link org.apache.iceberg.flink.sink.dynamic.DataConverter} is responsible to change the input
@@ -115,11 +113,7 @@ interface DataConverter {
                 ((TimestampType) targetType).getPrecision() > 6
                     ? ChronoUnit.NANOS
                     : ChronoUnit.MICROS;
-            LocalDateTime epoch = DateTimeUtil.EPOCH.toLocalDateTime();
-            LocalDateTime midnight = DateTimeUtil.dateFromDays((Integer) object).atStartOfDay();
-            // TimestampData has a wider range than Iceberg's signed-long timestamp encoding.
-            long value = unit.between(epoch, midnight);
-            return TimestampData.fromLocalDateTime(epoch.plus(value, unit));
+            return RowDataUtil.timestampFromDays((Integer) object, unit);
           } else {
             return object;
           }

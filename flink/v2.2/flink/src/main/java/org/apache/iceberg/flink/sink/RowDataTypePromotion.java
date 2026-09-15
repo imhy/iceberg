@@ -19,7 +19,6 @@
 package org.apache.iceberg.flink.sink;
 
 import java.io.IOException;
-import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -31,7 +30,6 @@ import org.apache.flink.table.data.GenericMapData;
 import org.apache.flink.table.data.GenericRowData;
 import org.apache.flink.table.data.MapData;
 import org.apache.flink.table.data.RowData;
-import org.apache.flink.table.data.TimestampData;
 import org.apache.flink.table.types.logical.ArrayType;
 import org.apache.flink.table.types.logical.LogicalType;
 import org.apache.flink.table.types.logical.MapType;
@@ -39,13 +37,13 @@ import org.apache.flink.table.types.logical.RowType;
 import org.apache.flink.table.types.logical.TimestampType;
 import org.apache.iceberg.flink.FlinkRowData;
 import org.apache.iceberg.flink.FlinkSchemaUtil;
+import org.apache.iceberg.flink.data.RowDataUtil;
 import org.apache.iceberg.io.TaskWriter;
 import org.apache.iceberg.io.WriteResult;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.TypeUtil;
 import org.apache.iceberg.types.Types;
-import org.apache.iceberg.util.DateTimeUtil;
 
 /** Normalizes promoted DATE fields while retaining the input representation of other fields. */
 final class RowDataTypePromotion {
@@ -133,13 +131,7 @@ final class RowDataTypePromotion {
       case DATE:
         ChronoUnit unit =
             ((TimestampType) target).getPrecision() > 6 ? ChronoUnit.NANOS : ChronoUnit.MICROS;
-        convert =
-            value -> {
-              LocalDateTime epoch = DateTimeUtil.EPOCH.toLocalDateTime();
-              LocalDateTime midnight = DateTimeUtil.dateFromDays((Integer) value).atStartOfDay();
-              long timestamp = unit.between(epoch, midnight);
-              return TimestampData.fromLocalDateTime(epoch.plus(timestamp, unit));
-            };
+        convert = value -> RowDataUtil.timestampFromDays((Integer) value, unit);
         break;
       case ROW:
         RowType fromRow = (RowType) source;

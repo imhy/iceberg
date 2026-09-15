@@ -21,7 +21,6 @@ package org.apache.iceberg.flink.data;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
-import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
 import java.util.List;
@@ -49,7 +48,6 @@ import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.types.TypeUtil;
 import org.apache.iceberg.types.Types;
 import org.apache.iceberg.util.ArrayUtil;
-import org.apache.iceberg.util.DateTimeUtil;
 import org.apache.parquet.column.ColumnDescriptor;
 import org.apache.parquet.io.api.Binary;
 import org.apache.parquet.schema.GroupType;
@@ -425,10 +423,7 @@ public class FlinkParquetReaders {
 
     @Override
     public TimestampData read(TimestampData reuse) {
-      LocalDateTime epoch = DateTimeUtil.EPOCH.toLocalDateTime();
-      LocalDateTime midnight = DateTimeUtil.dateFromDays(column.nextInteger()).atStartOfDay();
-      long value = unit.between(epoch, midnight);
-      return TimestampData.fromLocalDateTime(epoch.plus(value, unit));
+      return RowDataUtil.timestampFromDays(column.nextInteger(), unit);
     }
   }
 

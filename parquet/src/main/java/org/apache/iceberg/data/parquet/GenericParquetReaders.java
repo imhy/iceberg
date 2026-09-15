@@ -30,6 +30,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.function.IntToLongFunction;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.data.GenericDataUtil;
 import org.apache.iceberg.data.Record;
@@ -37,6 +38,7 @@ import org.apache.iceberg.parquet.ParquetValueReader;
 import org.apache.iceberg.parquet.ParquetValueReaders;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.types.Types.StructType;
+import org.apache.iceberg.util.DateTimeUtil;
 import org.apache.parquet.column.ColumnDescriptor;
 import org.apache.parquet.schema.LogicalTypeAnnotation;
 import org.apache.parquet.schema.MessageType;
@@ -150,19 +152,20 @@ public class GenericParquetReaders extends BaseParquetReaders<Record> {
 
   private static class DateAsTimestampReader
       extends ParquetValueReaders.PrimitiveReader<LocalDateTime> {
-    private final ChronoUnit unit;
+    private final IntToLongFunction toTimestamp;
 
     DateAsTimestampReader(ColumnDescriptor desc, ChronoUnit unit) {
       super(desc);
-      this.unit = unit;
+      this.toTimestamp =
+          unit == ChronoUnit.NANOS ? DateTimeUtil::nanosFromDays : DateTimeUtil::microsFromDays;
     }
 
     @Override
     public LocalDateTime read(LocalDateTime reuse) {
-      LocalDateTime timestamp = EPOCH_DAY.plusDays(column.nextInteger()).atStartOfDay();
+      int days = column.nextInteger();
       // LocalDateTime can represent dates outside the target timestamp's long range.
-      long value = unit.between(EPOCH.toLocalDateTime(), timestamp);
-      return EPOCH.toLocalDateTime().plus(value, unit);
+      long unused = toTimestamp.applyAsLong(days);
+      return DateTimeUtil.dateFromDays(days).atStartOfDay();
     }
   }
 
