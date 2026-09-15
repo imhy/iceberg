@@ -22,7 +22,9 @@ import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;
 import java.util.function.Function;
+import org.apache.iceberg.MetadataColumns;
 import org.apache.iceberg.Schema;
+import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.spark.functions.DateToTimestampNtzFunction.DateToTimestampNtz;
 import org.apache.iceberg.types.Type;
@@ -94,6 +96,11 @@ final class SparkTypePromotion {
 
   private static StructType promoteStruct(
       StructType struct, Types.StructType input, Types.StructType target) {
+    Preconditions.checkArgument(
+        struct.fields().length == input.fields().size(),
+        "Spark input schema does not match Iceberg field count: %s != %s",
+        struct.fields().length,
+        input.fields().size());
     StructField[] fields = struct.fields().clone();
     for (int i = 0; i < fields.length; i++) {
       Types.NestedField from = input.fields().get(i);
@@ -182,16 +189,16 @@ final class SparkTypePromotion {
     if (source.equals(target)) {
       return writer;
     }
-    Function<Object, Object> convert = converter(source, target);
+    Function<InternalRow, InternalRow> convert = rowConverter(source, target);
     return new DataWriter<>() {
       @Override
       public void write(InternalRow row) throws IOException {
-        writer.write((InternalRow) convert.apply(row));
+        writer.write(convert.apply(row));
       }
 
       @Override
       public void write(InternalRow metadata, InternalRow row) throws IOException {
-        writer.write(metadata, (InternalRow) convert.apply(row));
+        writer.write(metadata, convert.apply(row));
       }
 
       @Override
@@ -221,7 +228,26 @@ final class SparkTypePromotion {
       return Function.identity();
     }
     Function<Object, Object> convert = converter(source, target);
+    int size = source.fields().length;
+    if (hasRowLineage(source) && hasRowLineage(target)) {
+      // Metadata-aware writers append lineage after converting the data row. Some rewrite
+      // callers already supply a complete row, so prepare both supported layouts once.
+      StructType dataSource = new StructType(Arrays.copyOf(source.fields(), size - 2));
+      StructType dataTarget = new StructType(Arrays.copyOf(target.fields(), size - 2));
+      Function<Object, Object> convertData = converter(dataSource, dataTarget);
+      return row ->
+          (InternalRow) (row.numFields() == size - 2 ? convertData.apply(row) : convert.apply(row));
+    }
     return row -> (InternalRow) convert.apply(row);
+  }
+
+  private static boolean hasRowLineage(StructType type) {
+    StructField[] fields = type.fields();
+    return fields.length >= 2
+        && fields[fields.length - 2].name().equals(MetadataColumns.ROW_ID.name())
+        && fields[fields.length - 1]
+            .name()
+            .equals(MetadataColumns.LAST_UPDATED_SEQUENCE_NUMBER.name());
   }
 
   private static Function<Object, Object> converter(DataType source, DataType target) {
@@ -253,6 +279,11 @@ final class SparkTypePromotion {
   }
 
   private static Function<Object, Object> structConverter(StructType from, StructType to) {
+    Preconditions.checkArgument(
+        from.fields().length == to.fields().length,
+        "Cannot promote structs with different field counts: %s != %s",
+        from.fields().length,
+        to.fields().length);
     StructField[] fields = from.fields();
     List<Function<Object, Object>> conversions = Lists.newArrayList();
     for (int i = 0; i < fields.length; i++) {
@@ -260,8 +291,12 @@ final class SparkTypePromotion {
     }
     return value -> {
       InternalRow row = (InternalRow) value;
-      // Row lineage fields, when requested, are appended by the delegate writer.
-      Object[] result = new Object[row.numFields()];
+      Preconditions.checkArgument(
+          row.numFields() == fields.length,
+          "Input row does not match the schema field count: %s != %s",
+          row.numFields(),
+          fields.length);
+      Object[] result = new Object[fields.length];
       for (int i = 0; i < result.length; i++) {
         result[i] =
             conversions.get(i).apply(row.isNullAt(i) ? null : row.get(i, fields[i].dataType()));
