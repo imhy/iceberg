@@ -25,15 +25,22 @@ import static org.apache.iceberg.TableProperties.ORC_COMPRESSION_STRATEGY;
 import static org.apache.iceberg.TableProperties.PARQUET_COMPRESSION;
 import static org.apache.iceberg.TableProperties.PARQUET_COMPRESSION_LEVEL;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import javax.annotation.Nullable;
 import org.apache.flink.annotation.Internal;
+import org.apache.iceberg.BaseMetadataTable;
 import org.apache.iceberg.FileFormat;
+import org.apache.iceberg.HasTableOperations;
+import org.apache.iceberg.SerializableTable;
 import org.apache.iceberg.Snapshot;
 import org.apache.iceberg.Table;
+import org.apache.iceberg.TableUtil;
 import org.apache.iceberg.flink.FlinkWriteConf;
+import org.apache.iceberg.flink.TableLoader;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.relocated.com.google.common.collect.Sets;
@@ -53,6 +60,56 @@ public class SinkUtil {
   private SinkUtil() {}
 
   private static final Logger LOG = LoggerFactory.getLogger(SinkUtil.class);
+
+  static SerializableTable serializableTable(Table table, TableLoader tableLoader) {
+    Integer version = knownFormatVersion(table);
+    if (version != null) {
+      return table instanceof SerializableTable serialized
+          ? serialized
+          : (SerializableTable) SerializableTable.copyOf(table);
+    }
+
+    // Resolve a wrapper through an independent loader without closing the caller's loader.
+    try (TableLoader loader = tableLoader.clone()) {
+      loader.open();
+      Table loaded = loader.loadTable();
+      Preconditions.checkArgument(
+          table.uuid().equals(loaded.uuid()),
+          "Table loader resolved a different table: %s != %s",
+          table.uuid(),
+          loaded.uuid());
+      Preconditions.checkArgument(
+          table.schema().sameSchema(loaded.schema()),
+          "Table wrapper schema differs from the loaded table: %s",
+          table.name());
+      Integer loadedVersion = knownFormatVersion(loaded);
+      Preconditions.checkArgument(
+          loadedVersion != null, "Cannot resolve the format version for table: %s", table.name());
+      return new TableWithFormatVersion(table, loadedVersion);
+    } catch (IOException e) {
+      throw new UncheckedIOException("Failed to resolve table format version: " + table.name(), e);
+    }
+  }
+
+  private static Integer knownFormatVersion(Table table) {
+    if (table instanceof SerializableTable serialized) {
+      try {
+        return serialized.formatVersion();
+      } catch (UnsupportedOperationException e) {
+        // SerializableTable can capture wrappers whose format version is unavailable.
+        return null;
+      }
+    } else if (table instanceof HasTableOperations || table instanceof BaseMetadataTable) {
+      return TableUtil.formatVersion(table);
+    }
+    return null;
+  }
+
+  private static class TableWithFormatVersion extends SerializableTable {
+    private TableWithFormatVersion(Table table, int formatVersion) {
+      super(table, formatVersion);
+    }
+  }
 
   static Set<Integer> checkAndGetEqualityFieldIds(Table table, List<String> equalityFieldColumns) {
     Set<Integer> equalityFieldIds = Sets.newHashSet(table.schema().identifierFieldIds());

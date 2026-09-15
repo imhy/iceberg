@@ -352,7 +352,7 @@ public class IcebergSink
     private TableSchema tableSchema;
 
     private ResolvedSchema resolvedSchema;
-    private SerializableTable table;
+    private Table table;
     private final Map<String, String> writeOptions = Maps.newHashMap();
     private final Map<String, String> snapshotSummary = Maps.newHashMap();
     private ReadableConfig readableConfig = new Configuration();
@@ -414,17 +414,16 @@ public class IcebergSink
     }
 
     /**
-     * This iceberg {@link SerializableTable} instance is used for initializing {@link
-     * IcebergStreamWriter} which will write all the records into {@link DataFile}s and emit them to
-     * downstream operator. Providing a table would avoid so many table loading from each separate
-     * task.
+     * This iceberg {@link Table} instance is used for initializing {@link IcebergStreamWriter}
+     * which will write all the records into {@link DataFile}s and emit them to downstream operator.
+     * Providing a table would avoid so many table loading from each separate task.
      *
      * @param newTable the loaded iceberg table instance.
      * @return {@link IcebergSink.Builder} to connect the iceberg table.
      */
     @Override
     public Builder table(Table newTable) {
-      this.table = (SerializableTable) SerializableTable.copyOf(newTable);
+      this.table = newTable;
       return this;
     }
 
@@ -766,7 +765,8 @@ public class IcebergSink
       Duration tableRefreshInterval = flinkWriteConf.tableRefreshInterval();
       SerializableSupplier<Table> tableSupplier;
       if (tableRefreshInterval != null) {
-        tableSupplier = new CachingTableSupplier(table, tableLoader(), tableRefreshInterval);
+        tableSupplier =
+            new CachingTableSupplier(serializableTable, tableLoader(), tableRefreshInterval);
       } else {
         tableSupplier = () -> serializableTable;
       }
@@ -915,14 +915,14 @@ public class IcebergSink
       }
 
       try (TableLoader loader = tableLoader) {
-        return (SerializableTable) SerializableTable.copyOf(loader.loadTable());
+        return SinkUtil.serializableTable(loader.loadTable(), tableLoader);
       } catch (IOException e) {
         throw new UncheckedIOException(
             "Failed to load iceberg table from table loader: " + tableLoader, e);
       }
     }
 
-    return (SerializableTable) SerializableTable.copyOf(table);
+    return SinkUtil.serializableTable(table, tableLoader);
   }
 
   /**

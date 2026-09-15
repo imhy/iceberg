@@ -448,6 +448,7 @@ public class FlinkSink {
         }
       }
 
+      this.table = SinkUtil.serializableTable(table, tableLoader);
       flinkWriteConf = new FlinkWriteConf(table, writeOptions, readableConfig);
 
       // Find out the equality field id list based on the user-provided equality field column names.
