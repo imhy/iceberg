@@ -25,6 +25,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Locale;
 import java.util.stream.Stream;
 import org.apache.iceberg.DeleteFile;
 import org.apache.iceberg.Schema;
@@ -87,7 +88,7 @@ class TestDateToTimestampDeleteCache {
             .getOrCreate();
     sql("CREATE NAMESPACE local.db");
     sql(
-        "CREATE TABLE local.db.t (id INT, a INT, d DATE) USING iceberg "
+        "CREATE TABLE %s (id INT, a INT, d DATE) USING iceberg "
             + "TBLPROPERTIES ('format-version'='3', 'write.format.default'='"
             + format
             + "', 'write.delete.format.default'='"
@@ -96,7 +97,7 @@ class TestDateToTimestampDeleteCache {
     // Concurrent local writers can race while creating their common parent directory.
     Files.createDirectories(temp.resolve("db/t_" + format + "_" + cache + "/data"));
     sql(
-        "INSERT INTO local.db.t VALUES (1, 7, DATE '1970-01-02'), (2, 8, DATE '1970-01-02'), "
+        "INSERT INTO %s VALUES (1, 7, DATE '1970-01-02'), (2, 8, DATE '1970-01-02'), "
             + "(3, 7, DATE '1969-12-31'), (4, 7, CAST(NULL AS DATE))");
     Table table = Spark3Util.loadIcebergTable(spark, tableName);
     Schema deleteSchema = new Schema(table.schema().findField("d"), table.schema().findField("a"));
@@ -109,7 +110,7 @@ class TestDateToTimestampDeleteCache {
                 delete.copy("d", LocalDate.ofEpochDay(1), "a", 7), delete.copy("d", null, "a", 7)),
             deleteSchema);
     table.newRowDelta().addDeletes(deleteFile).commit();
-    sql("REFRESH TABLE local.db.t");
+    sql("REFRESH TABLE %s");
 
     SparkEnv.get().blockManager().memoryStore().clear();
 
@@ -126,7 +127,7 @@ class TestDateToTimestampDeleteCache {
     checkReads(deleteFile, beforeRepeat, cache);
 
     table.updateSchema().updateColumn("d", Types.TimestampType.withoutZone()).commit();
-    sql("REFRESH TABLE local.db.t");
+    sql("REFRESH TABLE %s");
     int beforePromotionRead = streamCount(deleteFile);
     JavaRDD<Row> newNarrow = spark.table(tableName).select("id").javaRDD();
     JavaRDD<Row> newWide = spark.table(tableName).select("id", "a", "d").javaRDD();
@@ -156,7 +157,7 @@ class TestDateToTimestampDeleteCache {
   }
 
   private void sql(String query) {
-    spark.sql(query.replace("local.db.t", tableName));
+    spark.sql(String.format(Locale.ROOT, query, tableName));
   }
 
   private static void checkReads(DeleteFile file, int previous, boolean cache) {
