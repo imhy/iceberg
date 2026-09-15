@@ -69,6 +69,54 @@ class TestDateToTimestampDeleteCache {
   @MethodSource("modes")
   void appliesDeletesAcrossLiveProjectionsAndCacheCleanup(String format, boolean cache)
       throws Exception {
+    Table table = createTable(format, cache);
+    DeleteFile deleteFile = addDeletes(table, format);
+
+    SparkEnv.get().blockManager().memoryStore().clear();
+
+    // Retain the RDDs so their table broadcasts stay live across the schema change.
+    JavaRDD<Row> oldWide = spark.table(tableName).select("id", "a", "d").javaRDD();
+    JavaRDD<Row> oldNarrow = spark.table(tableName).select("id").javaRDD();
+    List<Row> dates = oldWide.collect();
+    assertThat(dates).extracting(row -> row.getInt(0)).containsExactlyInAnyOrder(2, 3);
+    List<Row> ids = List.of(RowFactory.create(2), RowFactory.create(3));
+    checkProjection(oldNarrow, ids);
+    int beforeRepeat = streamCount(deleteFile);
+    checkProjection(oldWide, dates);
+    checkProjection(oldNarrow, ids);
+    checkReads(deleteFile, beforeRepeat, cache);
+
+    table.updateSchema().updateColumn("d", Types.TimestampType.withoutZone()).commit();
+    sql("REFRESH TABLE %s");
+    int beforePromotionRead = streamCount(deleteFile);
+    JavaRDD<Row> newNarrow = spark.table(tableName).select("id").javaRDD();
+    JavaRDD<Row> newWide = spark.table(tableName).select("id", "a", "d").javaRDD();
+    checkProjection(newNarrow, ids);
+    List<Row> timestamps =
+        List.of(
+            RowFactory.create(2, 8, LocalDate.ofEpochDay(1).atStartOfDay()),
+            RowFactory.create(3, 7, LocalDate.ofEpochDay(-1).atStartOfDay()));
+    checkProjection(newWide, timestamps);
+    assertThat(streamCount(deleteFile)).isGreaterThan(beforePromotionRead);
+
+    int afterPromotionRead = streamCount(deleteFile);
+    checkProjection(oldWide, dates);
+    checkProjection(oldNarrow, ids);
+    checkProjection(newWide, timestamps);
+    checkProjection(newNarrow, ids);
+    checkReads(deleteFile, afterPromotionRead, cache);
+
+    // Exercise the broadcast cleanup callback, then read through both still-live projections.
+    try (AutoCloseable ignored = (AutoCloseable) SerializableTableWithSize.copyOf(table)) {
+      checkProjection(newNarrow, ids);
+    }
+    int afterCleanup = streamCount(deleteFile);
+    checkProjection(newWide, timestamps);
+    checkProjection(oldWide, dates);
+    assertThat(streamCount(deleteFile)).isGreaterThan(afterCleanup);
+  }
+
+  private Table createTable(String format, boolean cache) throws Exception {
     tableName = "local.db.t_" + format + "_" + cache;
     spark =
         SparkSession.builder()
@@ -99,7 +147,10 @@ class TestDateToTimestampDeleteCache {
     sql(
         "INSERT INTO %s VALUES (1, 7, DATE '1970-01-02'), (2, 8, DATE '1970-01-02'), "
             + "(3, 7, DATE '1969-12-31'), (4, 7, CAST(NULL AS DATE))");
-    Table table = Spark3Util.loadIcebergTable(spark, tableName);
+    return Spark3Util.loadIcebergTable(spark, tableName);
+  }
+
+  private DeleteFile addDeletes(Table table, String format) throws Exception {
     Schema deleteSchema = new Schema(table.schema().findField("d"), table.schema().findField("a"));
     Record delete = GenericRecord.create(deleteSchema);
     DeleteFile deleteFile =
@@ -111,49 +162,11 @@ class TestDateToTimestampDeleteCache {
             deleteSchema);
     table.newRowDelta().addDeletes(deleteFile).commit();
     sql("REFRESH TABLE %s");
+    return deleteFile;
+  }
 
-    SparkEnv.get().blockManager().memoryStore().clear();
-
-    // Retain the RDDs so their table broadcasts stay live across the schema change.
-    JavaRDD<Row> oldWide = spark.table(tableName).select("id", "a", "d").javaRDD();
-    JavaRDD<Row> oldNarrow = spark.table(tableName).select("id").javaRDD();
-    List<Row> dates = oldWide.collect();
-    assertThat(dates).extracting(row -> row.getInt(0)).containsExactlyInAnyOrder(2, 3);
-    List<Row> ids = List.of(RowFactory.create(2), RowFactory.create(3));
-    assertThat(oldNarrow.collect()).containsExactlyInAnyOrderElementsOf(ids);
-    int beforeRepeat = streamCount(deleteFile);
-    assertThat(oldWide.collect()).containsExactlyInAnyOrderElementsOf(dates);
-    assertThat(oldNarrow.collect()).containsExactlyInAnyOrderElementsOf(ids);
-    checkReads(deleteFile, beforeRepeat, cache);
-
-    table.updateSchema().updateColumn("d", Types.TimestampType.withoutZone()).commit();
-    sql("REFRESH TABLE %s");
-    int beforePromotionRead = streamCount(deleteFile);
-    JavaRDD<Row> newNarrow = spark.table(tableName).select("id").javaRDD();
-    JavaRDD<Row> newWide = spark.table(tableName).select("id", "a", "d").javaRDD();
-    assertThat(newNarrow.collect()).containsExactlyInAnyOrderElementsOf(ids);
-    List<Row> timestamps =
-        List.of(
-            RowFactory.create(2, 8, LocalDate.ofEpochDay(1).atStartOfDay()),
-            RowFactory.create(3, 7, LocalDate.ofEpochDay(-1).atStartOfDay()));
-    assertThat(newWide.collect()).containsExactlyInAnyOrderElementsOf(timestamps);
-    assertThat(streamCount(deleteFile)).isGreaterThan(beforePromotionRead);
-
-    int afterPromotionRead = streamCount(deleteFile);
-    assertThat(oldWide.collect()).containsExactlyInAnyOrderElementsOf(dates);
-    assertThat(oldNarrow.collect()).containsExactlyInAnyOrderElementsOf(ids);
-    assertThat(newWide.collect()).containsExactlyInAnyOrderElementsOf(timestamps);
-    assertThat(newNarrow.collect()).containsExactlyInAnyOrderElementsOf(ids);
-    checkReads(deleteFile, afterPromotionRead, cache);
-
-    // Exercise the broadcast cleanup callback, then read through both still-live projections.
-    try (AutoCloseable ignored = (AutoCloseable) SerializableTableWithSize.copyOf(table)) {
-      assertThat(newNarrow.collect()).containsExactlyInAnyOrderElementsOf(ids);
-    }
-    int afterCleanup = streamCount(deleteFile);
-    assertThat(newWide.collect()).containsExactlyInAnyOrderElementsOf(timestamps);
-    assertThat(oldWide.collect()).containsExactlyInAnyOrderElementsOf(dates);
-    assertThat(streamCount(deleteFile)).isGreaterThan(afterCleanup);
+  private static void checkProjection(JavaRDD<Row> projection, List<Row> expected) {
+    assertThat(projection.collect()).containsExactlyInAnyOrderElementsOf(expected);
   }
 
   private void sql(String query) {
