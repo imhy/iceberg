@@ -37,7 +37,6 @@ import org.apache.iceberg.spark.TestSparkExecutorCache.CustomFileIO;
 import org.apache.iceberg.spark.TestSparkExecutorCache.CustomInputFile;
 import org.apache.iceberg.spark.source.SerializableTableWithSize;
 import org.apache.iceberg.types.Types;
-import org.apache.spark.SparkEnv;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.RowFactory;
@@ -71,8 +70,6 @@ class TestDateToTimestampDeleteCache {
       throws Exception {
     Table table = createTable(format, cache);
     DeleteFile deleteFile = addDeletes(table, format);
-
-    SparkEnv.get().blockManager().memoryStore().clear();
 
     // Retain the RDDs so their table broadcasts stay live across the schema change.
     JavaRDD<Row> oldWide = spark.table(tableName).select("id", "a", "d").javaRDD();
