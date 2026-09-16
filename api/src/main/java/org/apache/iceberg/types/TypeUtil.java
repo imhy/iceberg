@@ -42,6 +42,8 @@ import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 public class TypeUtil {
 
   private static final int HEADER_SIZE = 12;
+  private static final int MIN_FORMAT_VERSION = 1;
+  private static final int DATE_TO_TIMESTAMP_MIN_FORMAT_VERSION = 3;
 
   private TypeUtil() {}
 
@@ -409,12 +411,39 @@ public class TypeUtil {
    * @throws IllegalArgumentException if a field cannot be found (by id) in the source schema
    */
   public static Schema reassignDoc(Schema schema, Schema docSourceSchema) {
-    TypeUtil.CustomOrderSchemaVisitor<Type> visitor = new ReassignDoc(docSourceSchema);
+    return reassignAttributes(
+        schema,
+        new ReassignFieldAttributes(
+            docSourceSchema,
+            (field, source) -> Types.NestedField.from(field).withDoc(source.doc())));
+  }
+
+  /**
+   * Copies initial and write defaults from fields with matching IDs and types.
+   *
+   * <p>Fields with different types retain their existing defaults. Callers must finalize projection
+   * types before restoring defaults; this method does not perform type promotion.
+   */
+  public static Schema reassignDefaults(Schema schema, Schema defaultSourceSchema) {
+    return reassignAttributes(
+        schema,
+        new ReassignFieldAttributes(
+            defaultSourceSchema,
+            (field, source) -> {
+              Types.NestedField.Builder builder = Types.NestedField.from(field);
+              if (field.type().equals(source.type())) {
+                builder
+                    .withInitialDefault(source.initialDefaultLiteral())
+                    .withWriteDefault(source.writeDefaultLiteral());
+              }
+              return builder;
+            }));
+  }
+
+  private static Schema reassignAttributes(Schema schema, ReassignFieldAttributes visitor) {
+    Types.StructType struct = visit(schema, visitor).asStructType();
     return new Schema(
-        visitor
-            .schema(schema, new VisitFuture<>(schema.asStruct(), visitor))
-            .asStructType()
-            .fields());
+        schema.schemaId(), struct.fields(), schema.getAliases(), schema.identifierFieldIds());
   }
 
   /**
@@ -468,7 +497,18 @@ public class TypeUtil {
     return visit(type, new FindTypeVisitor(predicate));
   }
 
-  public static boolean isPromotionAllowed(Type from, Type.PrimitiveType to) {
+  /**
+   * Returns whether a supported type promotion is allowed in the given table format version.
+   *
+   * <p>Callers must also validate that the table format version is supported by the implementation
+   * and that the promotion is compatible with the table's partition specs and sort orders.
+   *
+   * @throws IllegalArgumentException if the format version is not positive
+   */
+  public static boolean isPromotionAllowed(int formatVersion, Type from, Type.PrimitiveType to) {
+    Preconditions.checkArgument(
+        formatVersion >= MIN_FORMAT_VERSION, "Invalid format version: %s", formatVersion);
+
     // Warning! Before changing this function, make sure that the type change doesn't introduce
     // compatibility problems in partitioning.
     if (from.equals(to)) {
@@ -481,6 +521,10 @@ public class TypeUtil {
 
       case FLOAT:
         return to.typeId() == Type.TypeID.DOUBLE;
+
+      case DATE:
+        return formatVersion >= DATE_TO_TIMESTAMP_MIN_FORMAT_VERSION
+            && isDateToTimestampPromotion(from, to);
 
       case DECIMAL:
         Types.DecimalType fromDecimal = (Types.DecimalType) from;
@@ -497,7 +541,33 @@ public class TypeUtil {
   }
 
   /**
+   * Returns whether the types describe a date-to-timestamp promotion without a time zone.
+   *
+   * <p>This does not check the table format version or partition and sort compatibility.
+   */
+  public static boolean isDateToTimestampPromotion(Type from, Type.PrimitiveType to) {
+    return from.typeId() == Type.TypeID.DATE
+        && (Types.TimestampType.withoutZone().equals(to)
+            || Types.TimestampNanoType.withoutZone().equals(to));
+  }
+
+  /**
+   * Returns whether a type promotion is allowed by the format v1/v2 rules.
+   *
+   * @deprecated Use {@link #isPromotionAllowed(int, Type, Type.PrimitiveType)} with the table's
+   *     format version. This overload does not recognize promotions introduced in later format
+   *     versions.
+   */
+  @Deprecated
+  public static boolean isPromotionAllowed(Type from, Type.PrimitiveType to) {
+    return isPromotionAllowed(MIN_FORMAT_VERSION, from, to);
+  }
+
+  /**
    * Check whether we could write the iceberg table with the user-provided write schema.
+   *
+   * <p>This overload uses format v1/v2 promotion rules. Use the format-version overload for
+   * table-aware checks.
    *
    * @param tableSchema the table schema written in iceberg meta data.
    * @param writeSchema the user-provided write schema.
@@ -507,12 +577,27 @@ public class TypeUtil {
    */
   public static void validateWriteSchema(
       Schema tableSchema, Schema writeSchema, Boolean checkNullability, Boolean checkOrdering) {
+    validateWriteSchema(
+        MIN_FORMAT_VERSION, tableSchema, writeSchema, checkNullability, checkOrdering);
+  }
+
+  /** Validates a write schema's types, nullability and ordering for a table format version. */
+  public static void validateWriteSchema(
+      int formatVersion,
+      Schema tableSchema,
+      Schema writeSchema,
+      boolean checkNullability,
+      boolean checkOrdering) {
     String errMsg = "Cannot write incompatible dataset to table with schema:";
-    checkSchemaCompatibility(errMsg, tableSchema, writeSchema, checkNullability, checkOrdering);
+    checkSchemaCompatibility(
+        formatVersion, errMsg, tableSchema, writeSchema, checkNullability, checkOrdering);
   }
 
   /**
    * Validates whether the provided schema is compatible with the expected schema.
+   *
+   * <p>This overload uses format v1/v2 promotion rules. Use the format-version overload for
+   * table-aware checks.
    *
    * @param context the schema context (e.g. row ID)
    * @param expectedSchema the expected schema
@@ -526,13 +611,31 @@ public class TypeUtil {
       Schema providedSchema,
       boolean checkNullability,
       boolean checkOrdering) {
+    validateSchema(
+        MIN_FORMAT_VERSION,
+        context,
+        expectedSchema,
+        providedSchema,
+        checkNullability,
+        checkOrdering);
+  }
+
+  /** Validates a provided schema against an expected schema for a table format version. */
+  public static void validateSchema(
+      int formatVersion,
+      String context,
+      Schema expectedSchema,
+      Schema providedSchema,
+      boolean checkNullability,
+      boolean checkOrdering) {
     String errMsg =
         String.format("Provided %s schema is incompatible with expected schema:", context);
     checkSchemaCompatibility(
-        errMsg, expectedSchema, providedSchema, checkNullability, checkOrdering);
+        formatVersion, errMsg, expectedSchema, providedSchema, checkNullability, checkOrdering);
   }
 
   private static void checkSchemaCompatibility(
+      int formatVersion,
       String errMsg,
       Schema schema,
       Schema providedSchema,
@@ -540,9 +643,13 @@ public class TypeUtil {
       boolean checkOrdering) {
     List<String> errors;
     if (checkNullability) {
-      errors = CheckCompatibility.writeCompatibilityErrors(schema, providedSchema, checkOrdering);
+      errors =
+          CheckCompatibility.writeCompatibilityErrors(
+              formatVersion, schema, providedSchema, checkOrdering);
     } else {
-      errors = CheckCompatibility.typeCompatibilityErrors(schema, providedSchema, checkOrdering);
+      errors =
+          CheckCompatibility.typeCompatibilityErrors(
+              formatVersion, schema, providedSchema, checkOrdering);
     }
 
     if (!errors.isEmpty()) {

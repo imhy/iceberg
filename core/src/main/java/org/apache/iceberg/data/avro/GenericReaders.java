@@ -30,6 +30,7 @@ import org.apache.iceberg.avro.ValueReader;
 import org.apache.iceberg.avro.ValueReaders;
 import org.apache.iceberg.data.GenericRecord;
 import org.apache.iceberg.data.Record;
+import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.Types.StructType;
 import org.apache.iceberg.util.DateTimeUtil;
 import org.apache.iceberg.util.Pair;
@@ -39,6 +40,14 @@ class GenericReaders {
 
   static ValueReader<LocalDate> dates() {
     return DateReader.INSTANCE;
+  }
+
+  static ValueReader<LocalDateTime> datesAsTimestamps(Type.PrimitiveType target) {
+    ValueReader<Long> reader = ValueReaders.datesAsTimestamps(target);
+    if (target.typeId() == Type.TypeID.TIMESTAMP_NANO) {
+      return (decoder, reuse) -> DateTimeUtil.timestampFromNanos(reader.read(decoder, null));
+    }
+    return (decoder, reuse) -> DateTimeUtil.timestampFromMicros(reader.read(decoder, null));
   }
 
   static ValueReader<LocalTime> times() {

@@ -175,7 +175,11 @@ public class GenericAvroReader<T>
       if (logicalType != null) {
         switch (logicalType.getName()) {
           case "date":
-            // Spark uses the same representation
+            if (partner != null
+                && (partner.typeId() == Type.TypeID.TIMESTAMP
+                    || partner.typeId() == Type.TypeID.TIMESTAMP_NANO)) {
+              return ValueReaders.datesAsTimestamps(partner.asPrimitiveType());
+            }
             return ValueReaders.ints();
 
           case "time-micros":

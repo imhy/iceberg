@@ -24,15 +24,19 @@ import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.util.Map;
 import java.util.Set;
+import org.apache.iceberg.Schema;
 import org.apache.iceberg.expressions.Bound;
 import org.apache.iceberg.expressions.BoundPredicate;
 import org.apache.iceberg.expressions.BoundReference;
 import org.apache.iceberg.expressions.Expression;
 import org.apache.iceberg.expressions.ExpressionVisitors;
+import org.apache.iceberg.expressions.Expressions;
 import org.apache.iceberg.expressions.Literal;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableSet;
+import org.apache.iceberg.relocated.com.google.common.collect.Sets;
 import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.Type.TypeID;
+import org.apache.iceberg.types.TypeUtil;
 import org.apache.iceberg.util.DateTimeUtil;
 import org.apache.orc.TypeDescription;
 import org.apache.orc.storage.common.type.HiveDecimal;
@@ -46,10 +50,15 @@ class ExpressionToSearchArgument
     extends ExpressionVisitors.BoundVisitor<ExpressionToSearchArgument.Action> {
 
   static SearchArgument convert(Expression expr, TypeDescription readSchema) {
-    Map<Integer, String> idToColumnName =
-        ORCSchemaUtil.idToOrcName(ORCSchemaUtil.convert(readSchema));
+    Schema physicalSchema = ORCSchemaUtil.convert(readSchema);
+    Map<Integer, String> idToColumnName = ORCSchemaUtil.idToOrcName(physicalSchema);
     SearchArgument.Builder builder = SearchArgumentFactory.newBuilder();
-    ExpressionVisitors.visit(expr, new ExpressionToSearchArgument(builder, idToColumnName))
+    // Rewrite NOT using Iceberg's expression contract before translating leaves to SQL semantics.
+    // Negating a SQL comparison directly can discard null rows that Iceberg's Evaluator retains.
+    ExpressionVisitors.visit(
+            Expressions.rewriteNot(expr),
+            new ExpressionToSearchArgument(
+                builder, idToColumnName, physicalSchema, defaultFieldIds(readSchema)))
         .invoke();
     return builder.build();
   }
@@ -68,11 +77,36 @@ class ExpressionToSearchArgument
 
   private final SearchArgument.Builder builder;
   private final Map<Integer, String> idToColumnName;
+  private final Schema physicalSchema;
+  private final Set<Integer> defaultFieldIds;
 
   private ExpressionToSearchArgument(
-      SearchArgument.Builder builder, Map<Integer, String> idToColumnName) {
+      SearchArgument.Builder builder,
+      Map<Integer, String> idToColumnName,
+      Schema physicalSchema,
+      Set<Integer> defaultFieldIds) {
     this.builder = builder;
     this.idToColumnName = idToColumnName;
+    this.physicalSchema = physicalSchema;
+    this.defaultFieldIds = defaultFieldIds;
+  }
+
+  private static Set<Integer> defaultFieldIds(TypeDescription schema) {
+    Set<Integer> ids = Sets.newHashSet();
+    collectDefaultFieldIds(schema, ids);
+    return ids;
+  }
+
+  private static void collectDefaultFieldIds(TypeDescription type, Set<Integer> ids) {
+    if (Boolean.parseBoolean(
+        type.getAttributeValue(ORCSchemaUtil.ICEBERG_INITIAL_DEFAULT_ATTRIBUTE))) {
+      ids.add(ORCSchemaUtil.fieldId(type));
+    }
+    if (type.getChildren() != null) {
+      for (TypeDescription child : type.getChildren()) {
+        collectDefaultFieldIds(child, ids);
+      }
+    }
   }
 
   @Override
@@ -163,20 +197,30 @@ class ExpressionToSearchArgument
 
   @Override
   public <T> Action lt(Bound<T> expr, Literal<T> lit) {
-    return () ->
-        this.builder.lessThan(
-            idToColumnName.get(expr.ref().fieldId()),
-            type(expr.ref().type()),
-            literal(expr.ref().type(), lit.value()));
+    return () -> {
+      // Iceberg orders null before non-null values; ORC comparisons use SQL null semantics.
+      this.builder.startOr();
+      isNull(expr).invoke();
+      this.builder.lessThan(
+          idToColumnName.get(expr.ref().fieldId()),
+          type(expr.ref().type()),
+          literal(expr.ref().type(), lit.value()));
+      this.builder.end();
+    };
   }
 
   @Override
   public <T> Action ltEq(Bound<T> expr, Literal<T> lit) {
-    return () ->
-        this.builder.lessThanEquals(
-            idToColumnName.get(expr.ref().fieldId()),
-            type(expr.ref().type()),
-            literal(expr.ref().type(), lit.value()));
+    return () -> {
+      // Iceberg orders null before non-null values; ORC comparisons use SQL null semantics.
+      this.builder.startOr();
+      isNull(expr).invoke();
+      this.builder.lessThanEquals(
+          idToColumnName.get(expr.ref().fieldId()),
+          type(expr.ref().type()),
+          literal(expr.ref().type(), lit.value()));
+      this.builder.end();
+    };
   }
 
   @Override
@@ -282,6 +326,15 @@ class ExpressionToSearchArgument
       // Cannot push down predicates for types which cannot be represented in PredicateLeaf.Type, so
       // return
       // TruthValue.YES_NO_NULL which signifies that this predicate cannot help with filtering
+      return () -> this.builder.literal(TruthValue.YES_NO_NULL);
+    } else if (defaultFieldIds.contains(pred.ref().fieldId())) {
+      // ORC sees a missing column as null, while the residual reads its non-null initial default.
+      return () -> this.builder.literal(TruthValue.YES_NO_NULL);
+    } else if (physicalSchema.findType(pred.ref().fieldId()) != null
+        && TypeUtil.isDateToTimestampPromotion(
+            physicalSchema.findType(pred.ref().fieldId()), pred.ref().type().asPrimitiveType())) {
+      // Timestamp literals do not describe the physical DATE statistics. Preserve all possible
+      // outcomes, including beneath NOT and OR, and let the residual filter evaluate promoted rows.
       return () -> this.builder.literal(TruthValue.YES_NO_NULL);
     } else {
       return super.predicate(pred);

@@ -24,9 +24,13 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.function.Function;
+import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.types.Type;
+import org.apache.iceberg.types.Types;
+import org.apache.iceberg.util.DateTimeUtil;
 import org.apache.iceberg.util.UUIDUtil;
 import org.apache.parquet.io.api.Binary;
+import org.apache.parquet.schema.LogicalTypeAnnotation.DateLogicalTypeAnnotation;
 import org.apache.parquet.schema.LogicalTypeAnnotation.DecimalLogicalTypeAnnotation;
 import org.apache.parquet.schema.PrimitiveType;
 
@@ -84,6 +88,20 @@ class ParquetConversions {
         return value -> ((Float) fromParquet.apply(value)).doubleValue();
       } else if (icebergType.typeId() == Type.TypeID.UUID) {
         return binary -> UUIDUtil.convert(((Binary) binary).toByteBuffer());
+      } else if (parquetType.getLogicalTypeAnnotation() instanceof DateLogicalTypeAnnotation) {
+        if (icebergType.typeId() == Type.TypeID.TIMESTAMP) {
+          Preconditions.checkArgument(
+              !((Types.TimestampType) icebergType).shouldAdjustToUTC(),
+              "Cannot promote date to %s",
+              icebergType);
+          return value -> DateTimeUtil.microsFromDays((Integer) value);
+        } else if (icebergType.typeId() == Type.TypeID.TIMESTAMP_NANO) {
+          Preconditions.checkArgument(
+              !((Types.TimestampNanoType) icebergType).shouldAdjustToUTC(),
+              "Cannot promote date to %s",
+              icebergType);
+          return value -> DateTimeUtil.nanosFromDays((Integer) value);
+        }
       }
     }
 

@@ -30,6 +30,7 @@ import org.apache.flink.table.types.logical.RowType;
 import org.apache.flink.table.types.logical.TimestampType;
 import org.apache.iceberg.StructLike;
 import org.apache.iceberg.types.Type;
+import org.apache.iceberg.types.TypeUtil;
 import org.apache.iceberg.types.Types;
 import org.apache.iceberg.util.DateTimeUtil;
 import org.apache.iceberg.util.UUIDUtil;
@@ -90,6 +91,16 @@ public class RowDataWrapper implements StructLike {
 
   private static PositionalGetter<?> buildGetter(LogicalType logicalType, Type type) {
     switch (logicalType.getTypeRoot()) {
+      case DATE:
+        if (type.isPrimitiveType()
+            && TypeUtil.isDateToTimestampPromotion(Types.DateType.get(), type.asPrimitiveType())) {
+          if (type.typeId() == Type.TypeID.TIMESTAMP_NANO) {
+            return (row, pos) -> DateTimeUtil.nanosFromDays(row.getInt(pos));
+          } else {
+            return (row, pos) -> DateTimeUtil.microsFromDays(row.getInt(pos));
+          }
+        }
+        return null;
       case TINYINT:
         return (row, pos) -> (int) row.getByte(pos);
       case SMALLINT:

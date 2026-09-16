@@ -22,6 +22,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import org.apache.iceberg.Schema;
+import org.apache.iceberg.data.GenericDataUtil;
 import org.apache.iceberg.data.Record;
 import org.apache.iceberg.orc.OrcRowReader;
 import org.apache.iceberg.orc.OrcSchemaWithTypeVisitor;
@@ -104,6 +105,12 @@ public class GenericOrcReader implements OrcRowReader<Record> {
     }
 
     @Override
+    public OrcValueReader<?> initialDefault(Types.NestedField field) {
+      return OrcValueReaders.constants(
+          GenericDataUtil.internalToGeneric(field.type(), field.initialDefault()));
+    }
+
+    @Override
     public OrcValueReader<?> primitive(Type.PrimitiveType iPrimitive, TypeDescription primitive) {
       if (iPrimitive == null) {
         return null;
@@ -136,6 +143,10 @@ public class GenericOrcReader implements OrcRowReader<Record> {
         case DOUBLE:
           return OrcValueReaders.doubles();
         case DATE:
+          if (iPrimitive instanceof Types.TimestampType
+              || iPrimitive instanceof Types.TimestampNanoType) {
+            return GenericOrcReaders.datesAsTimestamps(iPrimitive);
+          }
           return GenericOrcReaders.dates();
         case TIMESTAMP:
           return GenericOrcReaders.timestamps();
