@@ -51,6 +51,7 @@ import org.slf4j.LoggerFactory;
 class SchemaUpdate implements UpdateSchema {
   private static final Logger LOG = LoggerFactory.getLogger(SchemaUpdate.class);
   private static final int TABLE_ROOT_ID = -1;
+  private static final int LEGACY_FORMAT_VERSION = 1;
 
   private final TableOperations ops;
   private final TableMetadata base;
@@ -283,7 +284,7 @@ class SchemaUpdate implements UpdateSchema {
     }
 
     Preconditions.checkArgument(
-        TypeUtil.isPromotionAllowed(field.type(), newType),
+        TypeUtil.isPromotionAllowed(formatVersion(), field.type(), newType),
         "Cannot change column type: %s: %s -> %s",
         name,
         field.type(),
@@ -291,8 +292,7 @@ class SchemaUpdate implements UpdateSchema {
 
     // merge with a rename, if present
     int fieldId = field.fieldId();
-    Types.NestedField newField = Types.NestedField.from(field).ofType(newType).build();
-    updates.put(fieldId, newField);
+    updates.put(fieldId, TypePromotions.promote(base, name, field, newType));
 
     return this;
   }
@@ -376,8 +376,13 @@ class SchemaUpdate implements UpdateSchema {
 
   @Override
   public UpdateSchema unionByNameWith(Schema newSchema) {
-    UnionByNameVisitor.visit(this, schema, newSchema, caseSensitive);
+    UnionByNameVisitor.visit(formatVersion(), this, schema, newSchema, caseSensitive);
     return this;
+  }
+
+  private int formatVersion() {
+    // Schema-only updates have no table metadata and retain legacy promotion rules.
+    return base != null ? base.formatVersion() : LEGACY_FORMAT_VERSION;
   }
 
   @Override

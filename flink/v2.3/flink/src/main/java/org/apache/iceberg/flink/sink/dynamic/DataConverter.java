@@ -18,9 +18,7 @@
  */
 package org.apache.iceberg.flink.sink.dynamic;
 
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.LocalTime;
+import java.time.temporal.ChronoUnit;
 import java.util.Map;
 import org.apache.flink.table.data.ArrayData;
 import org.apache.flink.table.data.DecimalData;
@@ -29,12 +27,13 @@ import org.apache.flink.table.data.GenericMapData;
 import org.apache.flink.table.data.GenericRowData;
 import org.apache.flink.table.data.MapData;
 import org.apache.flink.table.data.RowData;
-import org.apache.flink.table.data.TimestampData;
 import org.apache.flink.table.types.logical.ArrayType;
 import org.apache.flink.table.types.logical.DecimalType;
 import org.apache.flink.table.types.logical.LogicalType;
 import org.apache.flink.table.types.logical.MapType;
 import org.apache.flink.table.types.logical.RowType;
+import org.apache.flink.table.types.logical.TimestampType;
+import org.apache.iceberg.flink.data.RowDataUtil;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 
 /**
@@ -110,9 +109,11 @@ interface DataConverter {
       case TIMESTAMP_WITHOUT_TIME_ZONE:
         return object -> {
           if (object instanceof Integer) {
-            LocalDateTime dateTime =
-                LocalDateTime.of(LocalDate.ofEpochDay((Integer) object), LocalTime.MIN);
-            return TimestampData.fromLocalDateTime(dateTime);
+            ChronoUnit unit =
+                ((TimestampType) targetType).getPrecision() > 6
+                    ? ChronoUnit.NANOS
+                    : ChronoUnit.MICROS;
+            return RowDataUtil.timestampFromDays((Integer) object, unit);
           } else {
             return object;
           }

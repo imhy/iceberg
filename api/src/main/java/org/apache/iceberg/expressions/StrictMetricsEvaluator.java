@@ -134,7 +134,7 @@ public class StrictMetricsEvaluator {
     protected <T> T lowerBound(BoundReference<T> ref) {
       int id = ref.fieldId();
       if (lowerBounds != null && lowerBounds.containsKey(id)) {
-        return Conversions.fromByteBuffer(ref.type(), lowerBounds.get(id));
+        return Conversions.boundFromByteBuffer(ref.type(), lowerBounds.get(id));
       }
 
       return null;
@@ -144,7 +144,7 @@ public class StrictMetricsEvaluator {
     protected <T> T upperBound(BoundReference<T> ref) {
       int id = ref.fieldId();
       if (upperBounds != null && upperBounds.containsKey(id)) {
-        return Conversions.fromByteBuffer(ref.type(), upperBounds.get(id));
+        return Conversions.boundFromByteBuffer(ref.type(), upperBounds.get(id));
       }
 
       return null;

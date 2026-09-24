@@ -179,6 +179,11 @@ public class InternalReader<T> implements DatumReader<T>, SupportsRowPosition, S
       if (logicalType != null) {
         switch (logicalType.getName()) {
           case "date":
+            if (partner != null
+                && (partner.second().typeId() == Type.TypeID.TIMESTAMP
+                    || partner.second().typeId() == Type.TypeID.TIMESTAMP_NANO)) {
+              return ValueReaders.datesAsTimestamps(partner.second().asPrimitiveType());
+            }
             return ValueReaders.ints();
 
           case "time-micros":

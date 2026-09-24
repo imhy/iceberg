@@ -18,6 +18,7 @@
  */
 package org.apache.iceberg.data.parquet;
 
+import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -84,6 +85,8 @@ abstract class BaseParquetReaders<T> {
   protected abstract ParquetValueReader<?> fixedReader(ColumnDescriptor desc);
 
   protected abstract ParquetValueReader<?> dateReader(ColumnDescriptor desc);
+
+  abstract ParquetValueReader<?> dateAsTimestampReader(ColumnDescriptor desc, ChronoUnit unit);
 
   protected abstract ParquetValueReader<?> timeReader(ColumnDescriptor desc);
 
@@ -161,6 +164,20 @@ abstract class BaseParquetReaders<T> {
 
     @Override
     public Optional<ParquetValueReader<?>> visit(DateLogicalTypeAnnotation dateLogicalType) {
+      if (expected.typeId() == TypeID.TIMESTAMP) {
+        Preconditions.checkArgument(
+            !((Types.TimestampType) expected).shouldAdjustToUTC(),
+            "Cannot promote date to %s",
+            expected);
+        return Optional.of(dateAsTimestampReader(desc, ChronoUnit.MICROS));
+      } else if (expected.typeId() == TypeID.TIMESTAMP_NANO) {
+        Preconditions.checkArgument(
+            !((Types.TimestampNanoType) expected).shouldAdjustToUTC(),
+            "Cannot promote date to %s",
+            expected);
+        return Optional.of(dateAsTimestampReader(desc, ChronoUnit.NANOS));
+      }
+
       return Optional.of(dateReader(desc));
     }
 

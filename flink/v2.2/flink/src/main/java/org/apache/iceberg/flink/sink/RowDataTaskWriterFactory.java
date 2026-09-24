@@ -30,6 +30,7 @@ import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.TableUtil;
+import org.apache.iceberg.flink.FlinkSchemaUtil;
 import org.apache.iceberg.flink.RowDataWrapper;
 import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.io.FileWriterFactory;
@@ -47,6 +48,7 @@ public class RowDataTaskWriterFactory implements TaskWriterFactory<RowData> {
   private final Supplier<Table> tableSupplier;
   private final Schema schema;
   private final RowType flinkSchema;
+  private final RowType inputFlinkSchema;
   private final PartitionSpec spec;
   private final long targetFileSizeBytes;
   private final FileFormat format;
@@ -116,7 +118,15 @@ public class RowDataTaskWriterFactory implements TaskWriterFactory<RowData> {
     }
 
     this.schema = schema;
-    this.flinkSchema = flinkSchema;
+    this.inputFlinkSchema = flinkSchema;
+    this.flinkSchema = (RowType) RowDataTypePromotion.promotedType(flinkSchema, schema.asStruct());
+    if (!this.flinkSchema.equals(inputFlinkSchema)) {
+      Schema inputSchema =
+          TypeUtil.reassignIds(
+              new Schema(FlinkSchemaUtil.convert(inputFlinkSchema).asStructType().fields()),
+              schema);
+      TypeUtil.validateWriteSchema(TableUtil.formatVersion(table), schema, inputSchema, true, true);
+    }
     this.spec = spec;
     this.targetFileSizeBytes = targetFileSizeBytes;
     this.format = format;
@@ -128,7 +138,7 @@ public class RowDataTaskWriterFactory implements TaskWriterFactory<RowData> {
           new FlinkFileWriterFactory.Builder(table)
               .dataFileFormat(format)
               .dataSchema(schema)
-              .dataFlinkType(flinkSchema)
+              .dataFlinkType(this.flinkSchema)
               .writerProperties(writeProperties)
               .build();
     } else if (upsert) {
@@ -141,7 +151,7 @@ public class RowDataTaskWriterFactory implements TaskWriterFactory<RowData> {
           new FlinkFileWriterFactory.Builder(table)
               .dataFileFormat(format)
               .dataSchema(schema)
-              .dataFlinkType(flinkSchema)
+              .dataFlinkType(this.flinkSchema)
               .deleteFileFormat(format)
               .equalityFieldIds(ArrayUtil.toPrimitive(equalityFieldIds.toArray(new Integer[0])))
               .equalityDeleteRowSchema(TypeUtil.select(schema, Sets.newHashSet(equalityFieldIds)))
@@ -152,7 +162,7 @@ public class RowDataTaskWriterFactory implements TaskWriterFactory<RowData> {
           new FlinkFileWriterFactory.Builder(table)
               .dataFileFormat(format)
               .dataSchema(schema)
-              .dataFlinkType(flinkSchema)
+              .dataFlinkType(this.flinkSchema)
               .deleteFileFormat(format)
               .equalityFieldIds(ArrayUtil.toPrimitive(equalityFieldIds.toArray(new Integer[0])))
               .equalityDeleteRowSchema(schema)
@@ -184,6 +194,10 @@ public class RowDataTaskWriterFactory implements TaskWriterFactory<RowData> {
 
   @Override
   public TaskWriter<RowData> create() {
+    return RowDataTypePromotion.wrap(createWriter(), inputFlinkSchema, flinkSchema);
+  }
+
+  private TaskWriter<RowData> createWriter() {
     Preconditions.checkNotNull(
         outputFileFactory,
         "The outputFileFactory shouldn't be null if we have invoked the initialize().");

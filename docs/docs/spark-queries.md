@@ -89,6 +89,11 @@ FROM prod.db.table;
 | `system.hours(col)` | `timestamp`, `timestamp_ntz` | `int` | `SELECT system.hours(ts) FROM prod.db.table;` |
 | `system.truncate(width, col)` | `tinyint`, `smallint`, `int`, `bigint`, `decimal`, `string`, `binary` | same type as `col` | `SELECT system.truncate(4, data) FROM prod.db.table;` |
 
+`system.iceberg_bucket(numBuckets, col)` is a supported alias of `system.bucket`, with
+identical input types, bucket values, and null handling. Qualify it with an Iceberg catalog,
+for example `prod.system.iceberg_bucket(16, id)`. It is also available as
+`prod.iceberg_bucket(16, id)` without the `system` namespace.
+
 All transform functions return `NULL` for `NULL` inputs.
 
 `system.years`, `system.months`, `system.days`, and `system.hours` return Iceberg transform values

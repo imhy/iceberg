@@ -23,6 +23,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import org.apache.iceberg.IcebergBuild;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
+import org.apache.iceberg.spark.functions.BucketFunction;
+import org.apache.iceberg.spark.functions.DateToTimestampNtzFunction;
 import org.apache.iceberg.spark.functions.IcebergVersionFunction;
 import org.apache.spark.sql.AnalysisException;
 import org.apache.spark.sql.catalyst.analysis.NoSuchFunctionException;
@@ -126,6 +128,46 @@ public class TestFunctionCatalog extends TestBaseWithCatalog {
         .as(
             "Should be able to call iceberg_version from empty namespace without fully qualified name when using Iceberg catalog")
         .isEqualTo(buildVersion);
+  }
+
+  @TestTemplate
+  void listsAndLoadsBucketAlias() throws NoSuchNamespaceException, NoSuchFunctionException {
+    for (String[] namespace : ImmutableList.of(EMPTY_NAMESPACE, SYSTEM_NAMESPACE)) {
+      assertThat(asFunctionCatalog.listFunctions(namespace))
+          .anyMatch(func -> "iceberg_bucket".equals(func.name()));
+      assertThat(asFunctionCatalog.loadFunction(Identifier.of(namespace, "iceberg_bucket")))
+          .isExactlyInstanceOf(BucketFunction.class);
+    }
+  }
+
+  @TestTemplate
+  void internalFunctionsAreLoadableButNotListed()
+      throws NoSuchNamespaceException, NoSuchFunctionException {
+    for (String[] namespace : ImmutableList.of(EMPTY_NAMESPACE, SYSTEM_NAMESPACE)) {
+      assertThat(asFunctionCatalog.listFunctions(namespace))
+          .noneMatch(func -> "date_to_timestamp_ntz".equals(func.name()));
+      assertThat(asFunctionCatalog.loadFunction(Identifier.of(namespace, "date_to_timestamp_ntz")))
+          .isExactlyInstanceOf(DateToTimestampNtzFunction.class);
+    }
+  }
+
+  @TestTemplate
+  void resolvesBucketAliasWithConvertedArgument() {
+    for (String namespace : ImmutableList.of(catalogName, catalogName + ".system")) {
+      assertThat(
+              sql(
+                  "SELECT %s.iceberg_bucket(16, %s.date_to_timestamp_ntz(d)) "
+                      + "FROM VALUES (DATE '1969-12-31'), (DATE '2021-03-14'), "
+                      + "(CAST(NULL AS DATE)) AS input(d)",
+                  namespace, namespace))
+          .usingRecursiveComparison()
+          .isEqualTo(
+              sql(
+                  "SELECT %s.bucket(16, CAST(d AS TIMESTAMP_NTZ)) "
+                      + "FROM VALUES (DATE '1969-12-31'), (DATE '2021-03-14'), "
+                      + "(CAST(NULL AS DATE)) AS input(d)",
+                  namespace));
+    }
   }
 
   private FunctionCatalog castToFunctionCatalog(String name) {
