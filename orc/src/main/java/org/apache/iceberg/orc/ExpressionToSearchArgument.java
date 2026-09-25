@@ -192,32 +192,20 @@ class ExpressionToSearchArgument
   @Override
   public <T> Action lt(Bound<T> expr, Literal<T> lit) {
     return () -> {
-      // Iceberg orders null before non-null values, so lt and ltEq match nulls; ORC comparisons
-      // use SQL null semantics and exclude nulls. As with notEq and notIn, the comparison is
-      // wrapped in OR(isNull, cmp) to preserve Iceberg's nulls-first evaluation.
-      this.builder.startOr();
-      isNull(expr).invoke();
       this.builder.lessThan(
           idToColumnName.get(expr.ref().fieldId()),
           type(expr.ref().type()),
           literal(expr.ref().type(), lit.value()));
-      this.builder.end();
     };
   }
 
   @Override
   public <T> Action ltEq(Bound<T> expr, Literal<T> lit) {
     return () -> {
-      // Iceberg orders null before non-null values, so lt and ltEq match nulls; ORC comparisons
-      // use SQL null semantics and exclude nulls. As with notEq and notIn, the comparison is
-      // wrapped in OR(isNull, cmp) to preserve Iceberg's nulls-first evaluation.
-      this.builder.startOr();
-      isNull(expr).invoke();
       this.builder.lessThanEquals(
           idToColumnName.get(expr.ref().fieldId()),
           type(expr.ref().type()),
           literal(expr.ref().type(), lit.value()));
-      this.builder.end();
     };
   }
 

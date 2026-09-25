@@ -54,16 +54,16 @@ class TestSearchArgumentNulls {
 
   @ParameterizedTest
   @MethodSource("types")
-  void preservesNullOrderingForComparisons(Type.PrimitiveType type) {
+  void excludesNullsFromComparisons(Type.PrimitiveType type) {
     for (Expression predicate :
         List.of(Expressions.lessThan("v", 1L), Expressions.lessThanOrEqual("v", 1L))) {
-      assertThat(evaluate(type, predicate, true).isNeeded()).isTrue();
+      assertThat(evaluate(type, predicate, true).isNeeded()).isFalse();
       assertThat(evaluate(type, Expressions.not(predicate), true).isNeeded()).isFalse();
     }
     for (Expression predicate :
         List.of(Expressions.greaterThan("v", 1L), Expressions.greaterThanOrEqual("v", 1L))) {
       assertThat(evaluate(type, predicate, true).isNeeded()).isFalse();
-      assertThat(evaluate(type, Expressions.not(predicate), true).isNeeded()).isTrue();
+      assertThat(evaluate(type, Expressions.not(predicate), true).isNeeded()).isFalse();
     }
   }
 
@@ -105,12 +105,12 @@ class TestSearchArgumentNulls {
 
   @ParameterizedTest
   @MethodSource("types")
-  void retainsPossibleNullMatchesWhenNullStatisticsAreUnknown(Type.PrimitiveType type) {
+  void prunesNonMatchingComparisonsWithUnknownNullStatistics(Type.PrimitiveType type) {
     for (Expression predicate :
         List.of(Expressions.lessThan("v", 1L), Expressions.lessThanOrEqual("v", 1L))) {
-      // The range cannot match, but absent null statistics do not prove the stripe has no nulls.
+      // Nulls cannot satisfy an ordered comparison, regardless of null statistics.
       assertThat(evaluate(type, predicate, TruthValue.YES_NO, TruthValue.NO, false).isNeeded())
-          .isTrue();
+          .isFalse();
     }
   }
 
