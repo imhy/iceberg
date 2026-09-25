@@ -30,7 +30,6 @@ import org.apache.iceberg.parquet.ParquetValueReader;
 import org.apache.iceberg.parquet.ParquetValueReaders;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.types.Types.StructType;
-import org.apache.iceberg.util.DateTimeUtil;
 import org.apache.parquet.column.ColumnDescriptor;
 import org.apache.parquet.schema.MessageType;
 
@@ -110,24 +109,7 @@ public class InternalReader<T extends StructLike> extends BaseParquetReaders<T> 
 
   @Override
   ParquetValueReader<?> dateAsTimestampReader(ColumnDescriptor desc, ChronoUnit unit) {
-    return new DateAsTimestampReader(desc, unit);
-  }
-
-  private static class DateAsTimestampReader extends ParquetValueReaders.PrimitiveReader<Long> {
-    private final ChronoUnit unit;
-
-    DateAsTimestampReader(ColumnDescriptor desc, ChronoUnit unit) {
-      super(desc);
-      this.unit = unit;
-    }
-
-    @Override
-    public Long read(Long reuse) {
-      int days = column.nextInteger();
-      return unit == ChronoUnit.NANOS
-          ? DateTimeUtil.nanosFromDays(days)
-          : DateTimeUtil.microsFromDays(days);
-    }
+    return ParquetValueReaders.datesAsTimestamps(desc, unit);
   }
 
   @Override

@@ -30,7 +30,6 @@ import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
-import java.util.function.IntToLongFunction;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.data.GenericDataUtil;
 import org.apache.iceberg.data.Record;
@@ -78,7 +77,12 @@ public class GenericParquetReaders extends BaseParquetReaders<Record> {
 
   @Override
   ParquetValueReader<?> dateAsTimestampReader(ColumnDescriptor desc, ChronoUnit unit) {
-    return new DateAsTimestampReader(desc, unit);
+    return ParquetValueReaders.datesAsTimestamps(
+        desc,
+        unit,
+        unit == ChronoUnit.NANOS
+            ? DateTimeUtil::timestampFromNanos
+            : DateTimeUtil::timestampFromMicros);
   }
 
   @Override
@@ -147,25 +151,6 @@ public class GenericParquetReaders extends BaseParquetReaders<Record> {
     @Override
     public LocalDate read(LocalDate reuse) {
       return EPOCH_DAY.plusDays(column.nextInteger());
-    }
-  }
-
-  private static class DateAsTimestampReader
-      extends ParquetValueReaders.PrimitiveReader<LocalDateTime> {
-    private final IntToLongFunction toTimestamp;
-
-    DateAsTimestampReader(ColumnDescriptor desc, ChronoUnit unit) {
-      super(desc);
-      this.toTimestamp =
-          unit == ChronoUnit.NANOS ? DateTimeUtil::nanosFromDays : DateTimeUtil::microsFromDays;
-    }
-
-    @Override
-    public LocalDateTime read(LocalDateTime reuse) {
-      int days = column.nextInteger();
-      // LocalDateTime can represent dates outside the target timestamp's long range.
-      long unused = toTimestamp.applyAsLong(days);
-      return DateTimeUtil.dateFromDays(days).atStartOfDay();
     }
   }
 

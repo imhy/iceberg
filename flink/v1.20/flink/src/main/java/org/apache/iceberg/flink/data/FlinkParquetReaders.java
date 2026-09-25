@@ -254,7 +254,10 @@ public class FlinkParquetReaders {
               expected);
           ChronoUnit unit =
               expected instanceof Types.TimestampNanoType ? ChronoUnit.NANOS : ChronoUnit.MICROS;
-          return Optional.of(new DateAsTimestampReader(desc, unit));
+          long unitsPerMilli = unit == ChronoUnit.NANOS ? 1_000_000L : 1_000L;
+          return Optional.of(
+              ParquetValueReaders.datesAsTimestamps(
+                  desc, unit, value -> TimestampData.fromEpochMillis(value / unitsPerMilli)));
         }
         return Optional.of(new ParquetValueReaders.UnboxedReader<>(desc));
       }
@@ -409,21 +412,6 @@ public class FlinkParquetReaders {
     @Override
     public DecimalData read(DecimalData ignored) {
       return DecimalData.fromUnscaledLong(column.nextLong(), precision, scale);
-    }
-  }
-
-  private static class DateAsTimestampReader
-      extends ParquetValueReaders.PrimitiveReader<TimestampData> {
-    private final ChronoUnit unit;
-
-    private DateAsTimestampReader(ColumnDescriptor desc, ChronoUnit unit) {
-      super(desc);
-      this.unit = unit;
-    }
-
-    @Override
-    public TimestampData read(TimestampData reuse) {
-      return RowDataUtil.timestampFromDays(column.nextInteger(), unit);
     }
   }
 

@@ -21,6 +21,7 @@ package org.apache.iceberg.spark.data;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
+import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -45,7 +46,6 @@ import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.spark.SparkUtil;
 import org.apache.iceberg.types.Type.TypeID;
 import org.apache.iceberg.types.Types;
-import org.apache.iceberg.util.DateTimeUtil;
 import org.apache.iceberg.util.UUIDUtil;
 import org.apache.parquet.column.ColumnDescriptor;
 import org.apache.parquet.io.api.Binary;
@@ -249,7 +249,7 @@ public class SparkParquetReaders {
                   Types.TimestampType.withoutZone().equals(expected),
                   "Cannot promote date to Spark type %s",
                   expected);
-              return new DateAsTimestampReader(desc);
+              return ParquetValueReaders.datesAsTimestamps(desc, ChronoUnit.MICROS);
             }
             return new UnboxedReader<>(desc);
           case INT_64:
@@ -361,17 +361,6 @@ public class SparkParquetReaders {
     @Override
     public Decimal read(Decimal ignored) {
       return Decimal.apply(column.nextLong(), precision, scale);
-    }
-  }
-
-  private static class DateAsTimestampReader extends PrimitiveReader<Long> {
-    private DateAsTimestampReader(ColumnDescriptor desc) {
-      super(desc);
-    }
-
-    @Override
-    public Long read(Long reuse) {
-      return DateTimeUtil.microsFromDays(column.nextInteger());
     }
   }
 

@@ -25,6 +25,7 @@ import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -33,6 +34,8 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.IntToLongFunction;
+import java.util.function.LongFunction;
 import org.apache.iceberg.MetadataColumns;
 import org.apache.iceberg.StructLike;
 import org.apache.iceberg.common.DynConstructors;
@@ -43,6 +46,7 @@ import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.types.Types;
+import org.apache.iceberg.util.DateTimeUtil;
 import org.apache.iceberg.util.UUIDUtil;
 import org.apache.parquet.column.ColumnDescriptor;
 import org.apache.parquet.column.page.PageReadStore;
@@ -88,6 +92,26 @@ public class ParquetValueReaders {
 
   public static ParquetValueReader<Long> intsAsLongs(ColumnDescriptor desc) {
     return new IntAsLongReader(desc);
+  }
+
+  /** Reads physical DATE values as zoneless timestamps at the requested precision. */
+  public static ParquetValueReader<Long> datesAsTimestamps(ColumnDescriptor desc, ChronoUnit unit) {
+    return datesAsTimestamps(desc, unit, Long::valueOf);
+  }
+
+  /** Reads physical DATE values as checked timestamps using the requested value representation. */
+  public static <T> ParquetValueReader<T> datesAsTimestamps(
+      ColumnDescriptor desc, ChronoUnit unit, LongFunction<T> representation) {
+    Preconditions.checkArgument(
+        unit == ChronoUnit.MICROS || unit == ChronoUnit.NANOS, "Invalid timestamp unit: %s", unit);
+    IntToLongFunction convert =
+        unit == ChronoUnit.NANOS ? DateTimeUtil::nanosFromDays : DateTimeUtil::microsFromDays;
+    return new PrimitiveReader<T>(desc) {
+      @Override
+      public T read(T reuse) {
+        return representation.apply(convert.applyAsLong(column.nextInteger()));
+      }
+    };
   }
 
   public static ParquetValueReader<Double> floatsAsDoubles(ColumnDescriptor desc) {
