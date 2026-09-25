@@ -21,6 +21,7 @@ package org.apache.iceberg.flink.sink.shuffle;
 import java.util.Comparator;
 import org.apache.flink.api.common.functions.Partitioner;
 import org.apache.flink.table.data.RowData;
+import org.apache.flink.table.types.logical.RowType;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.SortKey;
 import org.apache.iceberg.SortOrder;
@@ -36,10 +37,15 @@ class SketchRangePartitioner implements Partitioner<RowData> {
   private final RowDataWrapper rowDataWrapper;
 
   SketchRangePartitioner(Schema schema, SortOrder sortOrder, SortKey[] rangeBounds) {
+    this(schema, FlinkSchemaUtil.convert(schema), sortOrder, rangeBounds);
+  }
+
+  SketchRangePartitioner(
+      Schema schema, RowType rowType, SortOrder sortOrder, SortKey[] rangeBounds) {
     this.sortKey = new SortKey(schema, sortOrder);
     this.comparator = Comparators.forType(SortKeyUtil.sortKeySchema(schema, sortOrder).asStruct());
     this.rangeBounds = rangeBounds;
-    this.rowDataWrapper = new RowDataWrapper(FlinkSchemaUtil.convert(schema), schema.asStruct());
+    this.rowDataWrapper = new RowDataWrapper(rowType, schema.asStruct());
   }
 
   @Override

@@ -21,6 +21,7 @@ package org.apache.iceberg.flink.sink.shuffle;
 import java.util.concurrent.TimeUnit;
 import org.apache.flink.api.common.functions.Partitioner;
 import org.apache.flink.table.data.RowData;
+import org.apache.flink.table.types.logical.RowType;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.SortKey;
 import org.apache.iceberg.SortOrder;
@@ -54,7 +55,12 @@ class MapRangePartitioner implements Partitioner<RowData> {
   private long lastNewSortKeyLogTimeMilli;
 
   MapRangePartitioner(Schema schema, SortOrder sortOrder, MapAssignment mapAssignment) {
-    this.rowDataWrapper = new RowDataWrapper(FlinkSchemaUtil.convert(schema), schema.asStruct());
+    this(schema, FlinkSchemaUtil.convert(schema), sortOrder, mapAssignment);
+  }
+
+  MapRangePartitioner(
+      Schema schema, RowType rowType, SortOrder sortOrder, MapAssignment mapAssignment) {
+    this.rowDataWrapper = new RowDataWrapper(rowType, schema.asStruct());
     this.sortKey = new SortKey(schema, sortOrder);
     this.mapAssignment = mapAssignment;
     this.newSortKeyCounter = 0;
