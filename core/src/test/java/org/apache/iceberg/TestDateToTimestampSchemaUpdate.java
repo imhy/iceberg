@@ -24,6 +24,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.io.File;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Stream;
 import org.apache.iceberg.exceptions.CommitFailedException;
@@ -721,6 +722,34 @@ class TestDateToTimestampSchemaUpdate {
 
   private static long unitsPerDay(Type type) {
     return type.typeId() == Type.TypeID.TIMESTAMP ? 86_400_000_000L : 86_400_000_000_000L;
+  }
+
+  @ParameterizedTest
+  @MethodSource("targets")
+  @SuppressWarnings("deprecation")
+  void rebindsTypedIdentitySortTransform(Type.PrimitiveType target) {
+    SortOrder order =
+        SortOrder.builderFor(DATE_SCHEMA)
+            .addSortField(
+                Transforms.identity(Types.DateType.get()),
+                1,
+                SortDirection.ASC,
+                NullOrder.NULLS_FIRST)
+            .build();
+    TableMetadata metadata =
+        TableMetadata.newTableMetadata(
+            DATE_SCHEMA,
+            PartitionSpec.unpartitioned(),
+            order,
+            temp.toString(),
+            Map.of("format-version", "3"));
+    Schema promoted = new Schema(Types.NestedField.optional(1, "d", target));
+    TableMetadata updated = metadata.updateSchema(promoted);
+    Transform<?, ?> transform = updated.sortOrder().fields().get(0).transform();
+    assertThat(transform.canTransform(target)).isTrue();
+    assertThat(transform).isSameAs(Transforms.identity());
+    assertThat(partitionValue(transform, target, unitsPerDay(target)))
+        .isEqualTo(unitsPerDay(target));
   }
 
   @SuppressWarnings("unchecked")
