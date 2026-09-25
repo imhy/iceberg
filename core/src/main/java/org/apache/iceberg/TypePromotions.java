@@ -23,7 +23,6 @@ import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.TypeUtil;
 import org.apache.iceberg.types.Types;
-import org.apache.iceberg.util.DateTimeUtil;
 
 /** Table-specific validation and default conversion for field type promotions. */
 class TypePromotions {
@@ -86,7 +85,6 @@ class TypePromotions {
       return null;
     }
 
-    long micros = DateTimeUtil.microsFromDays((Integer) value.value());
-    return Literal.of(micros).to(target);
+    return value.to(target);
   }
 }

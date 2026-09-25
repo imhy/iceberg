@@ -406,6 +406,13 @@ class Literals {
       if (type.typeId() == Type.TypeID.DATE) {
         return (Literal<T>) this;
       }
+      if (type.typeId() == Type.TypeID.TIMESTAMP
+          && !((Types.TimestampType) type).shouldAdjustToUTC()) {
+        return (Literal<T>) new TimestampLiteral(DateTimeUtil.microsFromDays(value()));
+      } else if (type.typeId() == Type.TypeID.TIMESTAMP_NANO
+          && !((Types.TimestampNanoType) type).shouldAdjustToUTC()) {
+        return (Literal<T>) new TimestampNanoLiteral(DateTimeUtil.nanosFromDays(value()));
+      }
       return null;
     }
 

@@ -26,7 +26,6 @@ import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.TypeUtil;
 import org.apache.iceberg.types.Types;
-import org.apache.iceberg.util.DateTimeUtil;
 
 /** Preserves Iceberg field attributes when a validated Spark write promotes DATE values. */
 final class SparkWriteSchema extends TypeUtil.SchemaVisitor<Type> {
@@ -114,8 +113,6 @@ final class SparkWriteSchema extends TypeUtil.SchemaVisitor<Type> {
   }
 
   private static Literal<?> promoteDefault(Literal<?> value, Type target) {
-    return value == null
-        ? null
-        : Literal.of(DateTimeUtil.microsFromDays((Integer) value.value())).to(target);
+    return value == null ? null : value.to(target);
   }
 }

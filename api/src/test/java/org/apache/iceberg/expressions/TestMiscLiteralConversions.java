@@ -19,6 +19,7 @@
 package org.apache.iceberg.expressions;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.math.BigDecimal;
 import java.nio.ByteBuffer;
@@ -27,9 +28,32 @@ import java.util.List;
 import java.util.UUID;
 import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.Types;
+import org.apache.iceberg.util.DateTimeUtil;
 import org.junit.jupiter.api.Test;
 
 public class TestMiscLiteralConversions {
+  @Test
+  void dateToZonelessTimestamps() {
+    Literal<Integer> date = Literal.of(-1).to(Types.DateType.get());
+    assertThat(date.to(Types.TimestampType.withoutZone()).value())
+        .isEqualTo(DateTimeUtil.microsFromDays(-1));
+    assertThat(date.to(Types.TimestampNanoType.withoutZone()).value())
+        .isEqualTo(DateTimeUtil.nanosFromDays(-1));
+    assertThat(date.to(Types.TimestampType.withZone())).isNull();
+    assertThat(date.to(Types.TimestampNanoType.withZone())).isNull();
+  }
+
+  @Test
+  void dateToTimestampRejectsOverflow() {
+    Literal<Integer> date = Literal.of(Integer.MAX_VALUE).to(Types.DateType.get());
+    for (Type target :
+        List.of(Types.TimestampType.withoutZone(), Types.TimestampNanoType.withoutZone())) {
+      assertThatThrownBy(() -> date.to(target))
+          .isInstanceOf(ArithmeticException.class)
+          .hasMessageContaining("overflow");
+    }
+  }
+
   @Test
   public void testIdentityConversions() {
     List<Pair<Literal<?>, Type>> pairs =
@@ -260,8 +284,6 @@ public class TestMiscLiteralConversions {
         Types.DoubleType.get(),
         Types.TimeType.get(),
         Types.TimestampType.withZone(),
-        Types.TimestampType.withoutZone(),
-        Types.TimestampNanoType.withoutZone(),
         Types.TimestampNanoType.withZone(),
         Types.DecimalType.of(9, 4),
         Types.StringType.get(),
