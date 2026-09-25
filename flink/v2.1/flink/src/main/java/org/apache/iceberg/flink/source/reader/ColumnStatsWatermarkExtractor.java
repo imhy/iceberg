@@ -27,6 +27,7 @@ import org.apache.iceberg.flink.source.split.IcebergSourceSplit;
 import org.apache.iceberg.relocated.com.google.common.annotations.VisibleForTesting;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.types.Conversions;
+import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.Type.TypeID;
 import org.apache.iceberg.types.Types;
 
@@ -38,6 +39,7 @@ import org.apache.iceberg.types.Types;
 @Internal
 public class ColumnStatsWatermarkExtractor implements SplitWatermarkExtractor, Serializable {
   private final int eventTimeFieldId;
+  private final Type eventTimeType;
   private final String eventTimeFieldName;
   private final TimeUnit timeUnit;
 
@@ -61,6 +63,7 @@ public class ColumnStatsWatermarkExtractor implements SplitWatermarkExtractor, S
         "Found %s, expected a LONG, TIMESTAMP, or TIMESTAMP_NANO column for watermark generation.",
         typeID);
     this.eventTimeFieldId = field.fieldId();
+    this.eventTimeType = field.type();
     this.eventTimeFieldName = eventTimeFieldName;
     // Use the timeUnit only for Long columns; timestamp columns store fixed-precision longs.
     switch (typeID) {
@@ -78,6 +81,7 @@ public class ColumnStatsWatermarkExtractor implements SplitWatermarkExtractor, S
   @VisibleForTesting
   ColumnStatsWatermarkExtractor(int eventTimeFieldId, String eventTimeFieldName) {
     this.eventTimeFieldId = eventTimeFieldId;
+    this.eventTimeType = Types.LongType.get();
     this.eventTimeFieldName = eventTimeFieldName;
     this.timeUnit = TimeUnit.MICROSECONDS;
   }
@@ -103,7 +107,7 @@ public class ColumnStatsWatermarkExtractor implements SplitWatermarkExtractor, S
                   scanTask.file());
               return timeUnit.toMillis(
                   Conversions.boundFromByteBuffer(
-                      Types.LongType.get(), scanTask.file().lowerBounds().get(eventTimeFieldId)));
+                      eventTimeType, scanTask.file().lowerBounds().get(eventTimeFieldId)));
             })
         .min(Comparator.comparingLong(l -> l))
         .get();
