@@ -235,15 +235,11 @@ final class SparkTypePromotion {
       StructType dataTarget = new StructType(Arrays.copyOf(target.fields(), size - 2));
       Function<Object, Object> convertData = converter(dataSource, dataTarget);
       return row -> {
-        InternalRow snapshot = row.copy();
         return (InternalRow)
-            (snapshot.numFields() == size - 2
-                ? convertData.apply(snapshot)
-                : convert.apply(snapshot));
+            (row.numFields() == size - 2 ? convertData.apply(row) : convert.apply(row));
       };
     }
-    // Nested views share this owned snapshot; copy reused input only once at the root.
-    return row -> (InternalRow) convert.apply(row == null ? null : row.copy());
+    return row -> (InternalRow) convert.apply(row);
   }
 
   private static boolean hasRowLineage(StructType type) {

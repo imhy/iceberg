@@ -20,12 +20,16 @@ package org.apache.iceberg.spark.source;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
+import java.util.List;
 import org.apache.iceberg.Schema;
+import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.spark.SparkSchemaUtil;
 import org.apache.iceberg.types.Types;
 import org.apache.spark.sql.catalyst.InternalRow;
@@ -93,7 +97,7 @@ class TestSparkTypePromotion {
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   @SuppressWarnings("unchecked")
-  void retainsBufferedRowsWhenInputIsReused(boolean binary) throws Exception {
+  void convertsReusedInputDuringWrite(boolean binary) throws Exception {
     StructType nested = new StructType().add("d", DataTypes.DateType).add("id", DataTypes.LongType);
     StructType promotedNested =
         new StructType().add("d", DataTypes.TimestampNTZType).add("id", DataTypes.LongType);
@@ -128,6 +132,14 @@ class TestSparkTypePromotion {
     Function1<InternalRow, InternalRow> toBinary = UnsafeProjection.create(source);
     InternalRow input = binary ? toBinary.apply(generic).copy() : generic;
     DataWriter<InternalRow> delegate = mock(DataWriter.class);
+    List<InternalRow> written = Lists.newArrayList();
+    doAnswer(
+            invocation -> {
+              written.add(((InternalRow) invocation.getArgument(0)).copy());
+              return null;
+            })
+        .when(delegate)
+        .write(any());
     try (DataWriter<InternalRow> writer = SparkTypePromotion.wrap(delegate, source, target)) {
       writer.write(input);
       input.setInt(0, 2);
@@ -140,8 +152,8 @@ class TestSparkTypePromotion {
     }
     ArgumentCaptor<InternalRow> captured = ArgumentCaptor.forClass(InternalRow.class);
     verify(delegate, times(2)).write(captured.capture());
-    InternalRow first = captured.getAllValues().get(0);
-    InternalRow second = captured.getAllValues().get(1);
+    InternalRow first = written.get(0);
+    InternalRow second = written.get(1);
     assertThat(first.getLong(0)).isEqualTo(86_400_000_000L);
     assertThat(first.getLong(1)).isEqualTo(1000L);
     assertThat(first.getBoolean(2)).isTrue();
