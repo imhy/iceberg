@@ -37,12 +37,13 @@ public class SparkFunctions {
           "days", new DaysFunction(),
           "hours", new HoursFunction(),
           "bucket", new BucketFunction(),
-          "iceberg_bucket", new BucketFunction(),
           "truncate", new TruncateFunction());
 
   // Functions that can be resolved by name but are hidden from function listings
   private static final Map<String, UnboundFunction> INTERNAL_FUNCTIONS =
-      ImmutableMap.of("date_to_timestamp_ntz", new DateToTimestampNtzFunction());
+      ImmutableMap.of(
+          "date_to_timestamp_ntz", new DateToTimestampNtzFunction(),
+          "iceberg_bucket", new BucketFunction());
 
   private static final Map<Class<?>, UnboundFunction> CLASS_TO_FUNCTIONS =
       ImmutableMap.of(
