@@ -20,6 +20,10 @@ package org.apache.iceberg.data;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
@@ -29,7 +33,7 @@ import org.apache.iceberg.DeleteFile;
 import org.apache.iceberg.FileFormat;
 import org.apache.iceberg.MetadataColumns;
 import org.apache.iceberg.Schema;
-import org.apache.iceberg.SchemaParser;
+import org.apache.iceberg.SingleValueParser;
 import org.apache.iceberg.StructLike;
 import org.apache.iceberg.deletes.Deletes;
 import org.apache.iceberg.deletes.PositionDeleteIndex;
@@ -46,7 +50,9 @@ import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.base.Suppliers;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.Iterables;
+import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.TypeUtil;
+import org.apache.iceberg.types.Types;
 import org.apache.iceberg.util.CharSequenceMap;
 import org.apache.iceberg.util.ContentFileUtil;
 import org.apache.iceberg.util.StructLikeSet;
@@ -62,7 +68,6 @@ public class BaseDeleteLoader implements DeleteLoader {
 
   private final Function<DeleteFile, InputFile> loadInputFile;
   private final ExecutorService workerPool;
-  private ProjectionKey lastProjectionKey;
 
   public BaseDeleteLoader(Function<DeleteFile, InputFile> loadInputFile) {
     this(loadInputFile, ThreadPools.getDeleteWorkerPool());
@@ -101,7 +106,7 @@ public class BaseDeleteLoader implements DeleteLoader {
 
   @Override
   public StructLikeSet loadEqualityDeletes(Iterable<DeleteFile> deleteFiles, Schema projection) {
-    Supplier<String> projectionKey = projectionKey(projection);
+    Supplier<String> projectionKey = Suppliers.memoize(() -> projectionKey(projection));
     Iterable<Iterable<StructLike>> deletes =
         execute(
             deleteFiles, deleteFile -> getOrReadEqDeletes(deleteFile, projection, projectionKey));
@@ -110,17 +115,36 @@ public class BaseDeleteLoader implements DeleteLoader {
     return deleteSet;
   }
 
-  private synchronized Supplier<String> projectionKey(Schema projection) {
-    // Retain only the latest immutable schema on this loader. Each load keeps its own supplier,
-    // so concurrent projections cannot share a key, and uncached loads never serialize it.
-    if (lastProjectionKey == null || lastProjectionKey.schema() != projection) {
-      lastProjectionKey =
-          new ProjectionKey(projection, Suppliers.memoize(() -> SchemaParser.toJson(projection)));
+  private static String projectionKey(Schema projection) {
+    StringBuilder key = new StringBuilder();
+    appendReadType(key, projection.asStruct());
+    try {
+      return HexFormat.of()
+          .formatHex(
+              MessageDigest.getInstance("SHA-256")
+                  .digest(key.toString().getBytes(StandardCharsets.UTF_8)));
+    } catch (NoSuchAlgorithmException e) {
+      throw new IllegalStateException("Cannot fingerprint equality-delete projection", e);
     }
-    return lastProjectionKey.json();
   }
 
-  private record ProjectionKey(Schema schema, Supplier<String> json) {}
+  private static void appendReadType(StringBuilder key, Type type) {
+    if (type.isNestedType()) {
+      key.append(type.typeId()).append('[');
+      for (Types.NestedField field : type.asNestedType().fields()) {
+        key.append(field.fieldId()).append(':');
+        appendReadType(key, field.type());
+        String initialDefault =
+            field.initialDefault() == null
+                ? "null"
+                : SingleValueParser.toJson(field.type(), field.initialDefault());
+        key.append(initialDefault.length()).append(':').append(initialDefault).append(';');
+      }
+      key.append(']');
+    } else {
+      key.append(type).append(';');
+    }
+  }
 
   private Iterable<StructLike> getOrReadEqDeletes(
       DeleteFile deleteFile, Schema projection, Supplier<String> projectionKey) {

@@ -186,6 +186,26 @@ class TestDeleteLoaderCache {
     assertThat(loader.loads()).isEqualTo(1);
   }
 
+  @Test
+  void reusesProjectionAfterMetadataOnlyChanges() throws IOException {
+    Schema original = new Schema(Types.NestedField.optional(1, "id", Types.IntegerType.get()));
+    Table table = create(original);
+    DeleteFile delete = write(table, original, row(original, 1));
+    CachingLoader loader = new CachingLoader(table, true);
+    Schema renamed =
+        new Schema(
+            7,
+            Types.NestedField.optional("renamed")
+                .withId(1)
+                .ofType(Types.IntegerType.get())
+                .withDoc("Updated documentation")
+                .withWriteDefault(Literal.of(42))
+                .build());
+    assertContains(loader, delete, original, 1);
+    assertContains(loader, delete, renamed, 1);
+    assertThat(loader.loads()).isEqualTo(1);
+  }
+
   private Table create(Schema schema) {
     return TestTables.create(
         new File(temp, "table"), "test", schema, PartitionSpec.unpartitioned(), 3);
