@@ -30,7 +30,6 @@ import org.apache.flink.table.data.GenericArrayData;
 import org.apache.flink.table.data.GenericMapData;
 import org.apache.flink.table.data.MapData;
 import org.apache.flink.table.data.RowData;
-import org.apache.flink.table.runtime.typeutils.RowDataSerializer;
 import org.apache.flink.table.types.logical.ArrayType;
 import org.apache.flink.table.types.logical.LogicalType;
 import org.apache.flink.table.types.logical.MapType;
@@ -100,13 +99,10 @@ final class RowDataTypePromotion {
       return writer;
     }
     Function<Object, Object> convert = converter(source, target);
-    RowDataSerializer serializer = new RowDataSerializer(source);
     return new TaskWriter<>() {
       @Override
       public void write(RowData row) throws IOException {
-        // Writers may retain rows while Flink reuses its input buffers. Copy once at the root;
-        // nested conversions then share this owned snapshot without boxing unchanged primitives.
-        writer.write((RowData) convert.apply(row == null ? null : serializer.copy(row)));
+        writer.write((RowData) convert.apply(row));
       }
 
       @Override

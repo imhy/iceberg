@@ -20,12 +20,15 @@ package org.apache.iceberg.flink.sink;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
 import org.apache.flink.table.data.GenericArrayData;
@@ -46,6 +49,7 @@ import org.apache.flink.table.types.logical.TimestampType;
 import org.apache.flink.table.types.logical.VarCharType;
 import org.apache.flink.types.RowKind;
 import org.apache.iceberg.io.TaskWriter;
+import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -67,7 +71,7 @@ class TestRowDataTypePromotion {
   @ParameterizedTest
   @MethodSource("modes")
   @SuppressWarnings("unchecked")
-  void retainsBufferedRowsAndRowKindWhenInputIsReused(int precision, boolean binary, RowKind kind)
+  void convertsReusedInputAndRowKindDuringWrite(int precision, boolean binary, RowKind kind)
       throws Exception {
     RowType source = rowType(new DateType());
     RowType target = rowType(new TimestampType(precision));
@@ -82,6 +86,14 @@ class TestRowDataTypePromotion {
     generic.setRowKind(kind);
     RowData input = binary ? new RowDataSerializer(source).toBinaryRow(generic).copy() : generic;
     TaskWriter<RowData> delegate = mock(TaskWriter.class);
+    List<RowData> written = Lists.newArrayList();
+    doAnswer(
+            invocation -> {
+              written.add(new RowDataSerializer(target).copy(invocation.getArgument(0)));
+              return null;
+            })
+        .when(delegate)
+        .write(any());
     try (TaskWriter<RowData> writer = RowDataTypePromotion.wrap(delegate, source, target)) {
       writer.write(input);
       reuseInput(input);
@@ -89,8 +101,8 @@ class TestRowDataTypePromotion {
     }
     ArgumentCaptor<RowData> captured = ArgumentCaptor.forClass(RowData.class);
     verify(delegate, times(2)).write(captured.capture());
-    RowData first = captured.getAllValues().get(0);
-    RowData second = captured.getAllValues().get(1);
+    RowData first = written.get(0);
+    RowData second = written.get(1);
     assertThat(first.getRowKind()).isEqualTo(kind);
     assertThat(first.getTimestamp(0, precision).toLocalDateTime())
         .isEqualTo(LocalDate.parse("1970-01-02").atStartOfDay());

@@ -221,8 +221,7 @@ final class SparkTypePromotion {
       return Function.identity();
     }
     Function<Object, Object> convert = converter(source, target);
-    // Nested views share this owned snapshot; copy reused input only once at the root.
-    return row -> (InternalRow) convert.apply(row == null ? null : row.copy());
+    return row -> (InternalRow) convert.apply(row);
   }
 
   private static Function<Object, Object> converter(DataType source, DataType target) {
