@@ -809,15 +809,9 @@ public class TableMetadata implements Serializable {
       Schema oldSchema, Schema newSchema, int sourceId, Transform<?, ?> transform) {
     Type oldType = oldSchema.findType(sourceId);
     Type newType = newSchema.findType(sourceId);
-    if (oldType != null
-        && newType != null
-        && newType.isPrimitiveType()
-        && TypeUtil.isDateToTimestampPromotion(oldType, newType.asPrimitiveType())) {
-      // Temporal transforms parsed against DATE must bind to the promoted timestamp type.
-      return switch (transform.toString()) {
-        case "year", "month", "day" -> Transforms.fromString(transform.toString());
-        default -> transform;
-      };
+    if (oldType != null && newType != null && !oldType.equals(newType)) {
+      // Discard any type binding retained from the previous schema.
+      return Transforms.fromString(transform.toString());
     }
 
     return transform;
