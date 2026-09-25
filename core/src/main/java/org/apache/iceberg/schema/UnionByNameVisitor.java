@@ -27,7 +27,6 @@ import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.TypeUtil;
 import org.apache.iceberg.types.Types;
-import org.apache.iceberg.util.DateTimeUtil;
 
 /**
  * Visitor class that accumulates the set of changes needed to evolve an existing schema into the
@@ -202,8 +201,7 @@ public class UnionByNameVisitor extends SchemaWithPartnerVisitor<Integer, Boolea
         && TypeUtil.isDateToTimestampPromotion(
             field.type(), existingField.type().asPrimitiveType())) {
       // The incoming DATE keeps the table's wider type, so its default must use that type too.
-      long micros = DateTimeUtil.microsFromDays((Integer) writeDefault.value());
-      writeDefault = Literal.of(micros).to(existingField.type());
+      writeDefault = writeDefault.to(existingField.type());
     }
     boolean needsDefaultUpdate =
         writeDefault != null && !writeDefault.value().equals(existingField.writeDefault());
