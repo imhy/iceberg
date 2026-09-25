@@ -82,7 +82,6 @@ import org.apache.iceberg.flink.util.FlinkCompatibilityUtil;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.relocated.com.google.common.collect.Sets;
-import org.apache.iceberg.types.TypeUtil;
 import org.apache.iceberg.util.ThreadPools;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -587,13 +586,9 @@ public class IcebergSource<T> implements Source<T, IcebergSourceSplit, IcebergEn
           flinkConfig.get(FlinkConfigOptions.TABLE_EXEC_ICEBERG_WORKER_POOL_SIZE));
       Schema icebergSchema = table.schema();
       if (projectedFlinkSchema != null) {
-        contextBuilder.project(
-            TypeUtil.reassignDefaults(
-                FlinkSchemaUtil.convert(icebergSchema, projectedFlinkSchema), icebergSchema));
+        contextBuilder.project(FlinkSchemaUtil.convert(icebergSchema, projectedFlinkSchema));
       } else if (projectedTableSchema != null) {
-        contextBuilder.project(
-            TypeUtil.reassignDefaults(
-                FlinkSchemaUtil.convert(icebergSchema, projectedTableSchema), icebergSchema));
+        contextBuilder.project(FlinkSchemaUtil.convert(icebergSchema, projectedTableSchema));
       }
 
       SerializableRecordEmitter<T> emitter = SerializableRecordEmitter.defaultEmitter();
