@@ -22,6 +22,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableSet;
+import org.apache.iceberg.types.Conversions;
+import org.apache.iceberg.types.Types;
 import org.junit.jupiter.api.Test;
 
 class TestMetricsUtil {
@@ -65,6 +67,36 @@ class TestMetricsUtil {
     assertThat(file.copyWithStats(ImmutableSet.of(2)).avgValueSizes())
         .isEqualTo(ImmutableMap.of(2, 20));
     assertThat(file.copyWithStats(ImmutableSet.of(3)).avgValueSizes()).isNull();
+  }
+
+  @Test
+  void omitsUnrepresentableReadableBounds() {
+    Schema schema =
+        new Schema(Types.NestedField.optional(1, "d", Types.TimestampNanoType.withoutZone()));
+    int days = (int) (Long.MAX_VALUE / 86_400_000_000_000L) + 1;
+    Metrics metrics =
+        new Metrics(
+            1L,
+            null,
+            null,
+            null,
+            null,
+            ImmutableMap.of(1, Conversions.toByteBuffer(Types.DateType.get(), -days)),
+            ImmutableMap.of(1, Conversions.toByteBuffer(Types.DateType.get(), days)));
+    DataFile file =
+        DataFiles.builder(PartitionSpec.unpartitioned())
+            .withPath("date.parquet")
+            .withFileSizeInBytes(10)
+            .withMetrics(metrics)
+            .build();
+    Types.StructType projection =
+        MetricsUtil.readableMetricsSchema(schema, new Schema())
+            .findType(MetricsUtil.READABLE_METRICS)
+            .asStructType();
+    StructLike readable = MetricsUtil.readableMetricsStruct(schema, file, projection);
+    StructLike column = readable.get(0, StructLike.class);
+    assertThat(column.get(4, Object.class)).isNull();
+    assertThat(column.get(5, Object.class)).isNull();
   }
 
   private static Metrics metricsWithAvgValueSizes() {

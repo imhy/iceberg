@@ -20,6 +20,7 @@ package org.apache.iceberg;
 
 import static org.apache.iceberg.types.Types.NestedField.optional;
 
+import java.nio.ByteBuffer;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -183,8 +184,7 @@ public class MetricsUtil {
               (file, field) ->
                   file.lowerBounds() == null
                       ? null
-                      : Conversions.boundFromByteBuffer(
-                          field.type(), file.lowerBounds().get(field.fieldId()))),
+                      : readableBound(field.type(), file.lowerBounds().get(field.fieldId()))),
           new ReadableMetricColDefinition(
               "upper_bound",
               "Upper bound",
@@ -193,8 +193,16 @@ public class MetricsUtil {
               (file, field) ->
                   file.upperBounds() == null
                       ? null
-                      : Conversions.boundFromByteBuffer(
-                          field.type(), file.upperBounds().get(field.fieldId()))));
+                      : readableBound(field.type(), file.upperBounds().get(field.fieldId()))));
+
+  private static Object readableBound(Type type, ByteBuffer bound) {
+    try {
+      return Conversions.fromByteBuffer(type, bound);
+    } catch (ArithmeticException e) {
+      // The historical bound has no representation in the current field type.
+      return null;
+    }
+  }
 
   public static final String READABLE_METRICS = "readable_metrics";
 
