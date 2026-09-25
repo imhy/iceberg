@@ -166,8 +166,7 @@ class TestDateToTimestampMetrics {
     AggregateEvaluator belowAggregates =
         AggregateEvaluator.create(schema, List.of(Expressions.min("d"), Expressions.max("d")));
     belowAggregates.update(below);
-    assertThat(belowAggregates.result().get(0, Long.class)).isEqualTo(Long.MIN_VALUE);
-    assertThat(belowAggregates.result().get(1, Long.class)).isEqualTo(Long.MIN_VALUE);
+    assertThat(belowAggregates.allAggregatorsValid()).isFalse();
     // bounds above the representable range saturate to Long.MAX_VALUE
     int maxDay = (int) (Long.MAX_VALUE / unitsPerDay(type)) + 1;
     DataFile above = dateFile(maxDay, maxDay);
@@ -176,12 +175,15 @@ class TestDateToTimestampMetrics {
     AggregateEvaluator aboveAggregates =
         AggregateEvaluator.create(schema, List.of(Expressions.min("d"), Expressions.max("d")));
     aboveAggregates.update(above);
-    assertThat(aboveAggregates.result().get(0, Long.class)).isEqualTo(Long.MAX_VALUE);
-    assertThat(aboveAggregates.result().get(1, Long.class)).isEqualTo(Long.MAX_VALUE);
+    assertThat(aboveAggregates.allAggregatorsValid()).isFalse();
     // conservative bounds enclose the literal after saturation, so the file is not pruned
     DataFile enclosing = dateFile(minDay, maxDay);
     assertThat(new InclusiveMetricsEvaluator(schema, equality).eval(enclosing)).isTrue();
     assertThat(new StrictMetricsEvaluator(schema, equality).eval(enclosing)).isFalse();
+    AggregateEvaluator enclosingAggregates =
+        AggregateEvaluator.create(schema, List.of(Expressions.min("d"), Expressions.max("d")));
+    enclosingAggregates.update(enclosing);
+    assertThat(enclosingAggregates.allAggregatorsValid()).isFalse();
   }
 
   private static Schema schema(Type.PrimitiveType type) {
