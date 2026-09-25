@@ -28,8 +28,10 @@ import org.apache.flink.streaming.api.operators.OneInputStreamOperatorFactory;
 import org.apache.flink.streaming.api.operators.StreamOperator;
 import org.apache.flink.streaming.api.operators.StreamOperatorParameters;
 import org.apache.flink.table.data.RowData;
+import org.apache.flink.table.types.logical.RowType;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.SortOrder;
+import org.apache.iceberg.flink.FlinkSchemaUtil;
 
 @Internal
 public class DataStatisticsOperatorFactory extends AbstractStreamOperatorFactory<StatisticsOrRecord>
@@ -37,6 +39,7 @@ public class DataStatisticsOperatorFactory extends AbstractStreamOperatorFactory
         OneInputStreamOperatorFactory<RowData, StatisticsOrRecord> {
 
   private final Schema schema;
+  private final RowType rowType;
   private final SortOrder sortOrder;
   private final int downstreamParallelism;
   private final StatisticsType type;
@@ -48,6 +51,23 @@ public class DataStatisticsOperatorFactory extends AbstractStreamOperatorFactory
       int downstreamParallelism,
       StatisticsType type,
       double closeFileCostWeightPercentage) {
+    this(
+        schema,
+        FlinkSchemaUtil.convert(schema),
+        sortOrder,
+        downstreamParallelism,
+        type,
+        closeFileCostWeightPercentage);
+  }
+
+  public DataStatisticsOperatorFactory(
+      Schema schema,
+      RowType rowType,
+      SortOrder sortOrder,
+      int downstreamParallelism,
+      StatisticsType type,
+      double closeFileCostWeightPercentage) {
+    this.rowType = rowType;
     this.schema = schema;
     this.sortOrder = sortOrder;
     this.downstreamParallelism = downstreamParallelism;
@@ -79,7 +99,7 @@ public class DataStatisticsOperatorFactory extends AbstractStreamOperatorFactory
 
     DataStatisticsOperator rangeStatisticsOperator =
         new DataStatisticsOperator(
-            operatorName, schema, sortOrder, gateway, downstreamParallelism, type);
+            operatorName, schema, rowType, sortOrder, gateway, downstreamParallelism, type);
 
     rangeStatisticsOperator.setup(
         parameters.getContainingTask(), parameters.getStreamConfig(), parameters.getOutput());

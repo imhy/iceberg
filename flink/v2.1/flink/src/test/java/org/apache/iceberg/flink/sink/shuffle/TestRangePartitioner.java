@@ -23,12 +23,25 @@ import static org.apache.iceberg.flink.sink.shuffle.Fixtures.SCHEMA;
 import static org.apache.iceberg.flink.sink.shuffle.Fixtures.SORT_ORDER;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.util.Map;
 import java.util.Set;
 import org.apache.flink.table.data.GenericRowData;
+import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.data.StringData;
+import org.apache.flink.table.data.TimestampData;
+import org.apache.flink.table.runtime.typeutils.RowDataSerializer;
+import org.apache.flink.table.types.logical.RowType;
+import org.apache.iceberg.Schema;
 import org.apache.iceberg.SortKey;
+import org.apache.iceberg.SortOrder;
+import org.apache.iceberg.flink.FlinkSchemaUtil;
 import org.apache.iceberg.relocated.com.google.common.collect.Sets;
+import org.apache.iceberg.types.Comparators;
+import org.apache.iceberg.types.Types;
+import org.apache.iceberg.util.DateTimeUtil;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 public class TestRangePartitioner {
   private final int numPartitions = 4;
@@ -61,5 +74,43 @@ public class TestRangePartitioner {
 
     // round-robin. every partition should get an assignment
     assertThat(results).containsExactlyInAnyOrder(0, 1, 2, 3);
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void partitionsDateInputUsingTimestampStatistics(boolean binary) {
+    Schema schema =
+        new Schema(Types.NestedField.required(1, "d", Types.TimestampType.withoutZone()));
+    Schema inputSchema = new Schema(Types.NestedField.required(1, "d", Types.DateType.get()));
+    RowType inputType = FlinkSchemaUtil.convert(inputSchema);
+    SortOrder order = SortOrder.builderFor(schema).asc("d").build();
+    SortKey boundary = new SortKey(schema, order);
+    boundary.set(0, DateTimeUtil.microsFromDays(1));
+    SortKey higher = boundary.copy();
+    higher.set(0, DateTimeUtil.microsFromDays(2));
+    RowData row = GenericRowData.of(2);
+    if (binary) {
+      row = new RowDataSerializer(inputType).toBinaryRow(row);
+    }
+    RangePartitioner sketch = new RangePartitioner(schema, inputType, order);
+    sketch.partition(
+        StatisticsOrRecord.fromStatistics(
+            GlobalStatistics.fromRangeBounds(1L, new SortKey[] {boundary})),
+        2);
+    assertThat(sketch.partition(StatisticsOrRecord.fromRecord(row), 2)).isEqualTo(1);
+
+    MapAssignment assignment =
+        MapAssignment.fromKeyFrequency(
+            2,
+            Map.of(boundary, 10L, higher, 10L),
+            0.0,
+            Comparators.forType(SortKeyUtil.sortKeySchema(schema, order).asStruct()));
+    RangePartitioner map = new RangePartitioner(schema, inputType, order);
+    map.partition(
+        StatisticsOrRecord.fromStatistics(GlobalStatistics.fromMapAssignment(1L, assignment)), 2);
+    assertThat(map.partition(StatisticsOrRecord.fromRecord(row), 2))
+        .isEqualTo(
+            new MapRangePartitioner(schema, order, assignment)
+                .partition(GenericRowData.of(TimestampData.fromEpochMillis(2 * 86_400_000L)), 2));
   }
 }

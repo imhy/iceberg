@@ -696,6 +696,7 @@ public class FlinkSink {
                       statisticsOrRecordTypeInformation,
                       new DataStatisticsOperatorFactory(
                           iSchema,
+                          flinkRowType,
                           sortOrder,
                           writerParallelism,
                           statisticsType,
@@ -707,7 +708,7 @@ public class FlinkSink {
           }
 
           return shuffleStream
-              .partitionCustom(new RangePartitioner(iSchema, sortOrder), r -> r)
+              .partitionCustom(new RangePartitioner(iSchema, flinkRowType, sortOrder), r -> r)
               .flatMap(
                   (FlatMapFunction<StatisticsOrRecord, RowData>)
                       (statisticsOrRecord, out) -> {

@@ -23,9 +23,11 @@ import java.util.concurrent.atomic.AtomicLong;
 import org.apache.flink.annotation.Internal;
 import org.apache.flink.api.common.functions.Partitioner;
 import org.apache.flink.table.data.RowData;
+import org.apache.flink.table.types.logical.RowType;
 import org.apache.iceberg.DistributionMode;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.SortOrder;
+import org.apache.iceberg.flink.FlinkSchemaUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -35,12 +37,18 @@ public class RangePartitioner implements Partitioner<StatisticsOrRecord> {
   private static final Logger LOG = LoggerFactory.getLogger(RangePartitioner.class);
 
   private final Schema schema;
+  private final RowType rowType;
   private final SortOrder sortOrder;
 
   private transient AtomicLong roundRobinCounter;
   private transient Partitioner<RowData> delegatePartitioner;
 
   public RangePartitioner(Schema schema, SortOrder sortOrder) {
+    this(schema, FlinkSchemaUtil.convert(schema), sortOrder);
+  }
+
+  public RangePartitioner(Schema schema, RowType rowType, SortOrder sortOrder) {
+    this.rowType = rowType;
     this.schema = schema;
     this.sortOrder = sortOrder;
   }
@@ -72,9 +80,9 @@ public class RangePartitioner implements Partitioner<StatisticsOrRecord> {
 
   private Partitioner<RowData> delegatePartitioner(GlobalStatistics statistics) {
     if (statistics.type() == StatisticsType.Map) {
-      return new MapRangePartitioner(schema, sortOrder, statistics.mapAssignment());
+      return new MapRangePartitioner(schema, rowType, sortOrder, statistics.mapAssignment());
     } else if (statistics.type() == StatisticsType.Sketch) {
-      return new SketchRangePartitioner(schema, sortOrder, statistics.rangeBounds());
+      return new SketchRangePartitioner(schema, rowType, sortOrder, statistics.rangeBounds());
     } else {
       throw new IllegalArgumentException(
           String.format("Invalid statistics type: %s. Should be Map or Sketch", statistics.type()));

@@ -103,6 +103,33 @@ class TestDateToTimestampSink {
 
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
+  void writesDateInputThroughRangeDistribution(boolean modern) throws Exception {
+    Schema schema = schema(Types.TimestampType.withoutZone());
+    Table table =
+        CATALOG
+            .catalog()
+            .createTable(
+                TableIdentifier.of("db", "t"),
+                schema,
+                PartitionSpec.builderFor(schema).day("d").build(),
+                Map.of("format-version", "3", "write.format.default", "parquet"));
+    StreamExecutionEnvironment env = environment();
+    attach(env, table, modern, DistributionMode.RANGE);
+    env.execute("range distribute promoted dates");
+    table.refresh();
+    List<Object> values = Lists.newArrayList();
+    try (CloseableIterable<Record> rows = IcebergGenerics.read(table).build()) {
+      for (Record row : rows) {
+        values.add(row.getField("d"));
+      }
+    }
+    assertThat(values)
+        .containsExactlyInAnyOrder(
+            LocalDate.ofEpochDay(-1).atStartOfDay(), LocalDate.ofEpochDay(1).atStartOfDay(), null);
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
   void rejectsDateInputUsingTheActualV2TableVersion(boolean modern) {
     Schema schema = schema(Types.TimestampType.withoutZone());
     Table table =
@@ -127,6 +154,11 @@ class TestDateToTimestampSink {
   }
 
   private static void attach(StreamExecutionEnvironment env, Table table, boolean modern) {
+    attach(env, table, modern, DistributionMode.HASH);
+  }
+
+  private static void attach(
+      StreamExecutionEnvironment env, Table table, boolean modern, DistributionMode distribution) {
     RowType dates = FlinkSchemaUtil.convert(schema(Types.DateType.get()));
     List<RowData> values =
         List.of(GenericRowData.of(1, -1), GenericRowData.of(2, 1), GenericRowData.of(3, null));
@@ -136,14 +168,14 @@ class TestDateToTimestampSink {
           .table(table)
           .tableLoader(CATALOG.tableLoader())
           .resolvedSchema(FlinkSchemaUtil.toResolvedSchema(dates))
-          .distributionMode(DistributionMode.HASH)
+          .distributionMode(distribution)
           .append();
     } else {
       FlinkSink.forRowData(input)
           .table(table)
           .tableLoader(CATALOG.tableLoader())
           .resolvedSchema(FlinkSchemaUtil.toResolvedSchema(dates))
-          .distributionMode(DistributionMode.HASH)
+          .distributionMode(distribution)
           .append();
     }
   }
