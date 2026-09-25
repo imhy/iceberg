@@ -131,10 +131,10 @@ public class TestFunctionCatalog extends TestBaseWithCatalog {
   }
 
   @TestTemplate
-  void listsAndLoadsBucketAlias() throws NoSuchNamespaceException, NoSuchFunctionException {
+  void loadsBucketAliasWithoutListingIt() throws NoSuchNamespaceException, NoSuchFunctionException {
     for (String[] namespace : ImmutableList.of(EMPTY_NAMESPACE, SYSTEM_NAMESPACE)) {
       assertThat(asFunctionCatalog.listFunctions(namespace))
-          .anyMatch(func -> "iceberg_bucket".equals(func.name()));
+          .noneMatch(func -> "iceberg_bucket".equals(func.name()));
       assertThat(asFunctionCatalog.loadFunction(Identifier.of(namespace, "iceberg_bucket")))
           .isExactlyInstanceOf(BucketFunction.class);
     }
