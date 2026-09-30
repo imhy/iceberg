@@ -197,22 +197,20 @@ class ExpressionToSearchArgument
 
   @Override
   public <T> Action lt(Bound<T> expr, Literal<T> lit) {
-    return () -> {
-      this.builder.lessThan(
-          idToColumnName.get(expr.ref().fieldId()),
-          type(expr.ref().type()),
-          literal(expr.ref().type(), lit.value()));
-    };
+    return () ->
+        this.builder.lessThan(
+            idToColumnName.get(expr.ref().fieldId()),
+            type(expr.ref().type()),
+            literal(expr.ref().type(), lit.value()));
   }
 
   @Override
   public <T> Action ltEq(Bound<T> expr, Literal<T> lit) {
-    return () -> {
-      this.builder.lessThanEquals(
-          idToColumnName.get(expr.ref().fieldId()),
-          type(expr.ref().type()),
-          literal(expr.ref().type(), lit.value()));
-    };
+    return () ->
+        this.builder.lessThanEquals(
+            idToColumnName.get(expr.ref().fieldId()),
+            type(expr.ref().type()),
+            literal(expr.ref().type(), lit.value()));
   }
 
   @Override
