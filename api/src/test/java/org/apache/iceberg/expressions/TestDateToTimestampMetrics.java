@@ -32,6 +32,7 @@ import org.apache.iceberg.TestHelpers.TestDataFile;
 import org.apache.iceberg.types.Conversions;
 import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.Types;
+import org.apache.iceberg.util.DateTimeUtil;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
@@ -190,8 +191,44 @@ class TestDateToTimestampMetrics {
     return new Schema(Types.NestedField.optional(1, "d", type));
   }
 
+  @ParameterizedTest
+  @MethodSource("timestampTypes")
+  void saturatedBoundsCannotProveExactMatches(Type.PrimitiveType type) {
+    int day = (int) (Long.MAX_VALUE / unitsPerDay(type)) + 1;
+    for (boolean positive : new boolean[] {false, true}) {
+      long endpoint = positive ? Long.MAX_VALUE : Long.MIN_VALUE;
+      String value =
+          type.typeId() == Type.TypeID.TIMESTAMP
+              ? DateTimeUtil.microsToIsoTimestamp(endpoint)
+              : DateTimeUtil.nanosToIsoTimestamp(endpoint);
+      DataFile file = dateFile(positive ? day : -day, positive ? day : -day);
+      for (Expression predicate :
+          List.of(Expressions.equal("d", value), Expressions.in("d", value, timestamp(0)))) {
+        assertThat(new InclusiveMetricsEvaluator(schema(type), predicate).eval(file)).isTrue();
+        assertThat(new StrictMetricsEvaluator(schema(type), predicate).eval(file)).isFalse();
+      }
+    }
+  }
+
   private static String timestamp(int day) {
     return LocalDate.ofEpochDay(day).atStartOfDay().toString();
+  }
+
+  @ParameterizedTest
+  @MethodSource("timestampTypes")
+  void saturatedBoundsCannotPruneNegatedTransforms(Type.PrimitiveType type) {
+    int day = (int) (Long.MAX_VALUE / unitsPerDay(type)) + 1;
+    for (boolean positive : new boolean[] {false, true}) {
+      long endpoint = positive ? Long.MAX_VALUE : Long.MIN_VALUE;
+      int endpointDay = (int) Math.floorDiv(endpoint, unitsPerDay(type));
+      DataFile file = dateFile(positive ? day : -day - 1, positive ? day + 1 : -day);
+      for (Expression predicate :
+          List.of(
+              Expressions.notEqual(Expressions.day("d"), endpointDay),
+              Expressions.notIn(Expressions.day("d"), endpointDay))) {
+        assertThat(new InclusiveMetricsEvaluator(schema(type), predicate).eval(file)).isTrue();
+      }
+    }
   }
 
   private static long unitsPerDay(Type type) {

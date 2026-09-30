@@ -53,6 +53,11 @@ abstract class InclusiveEvalVisitor extends ExpressionVisitors.BoundVisitor<Bool
     return null;
   }
 
+  /** Whether equal bounds can establish a single value for this column. */
+  protected boolean hasExactBounds(BoundReference<?> ref) {
+    return true;
+  }
+
   /** Return a variant field's lower bound if it is known, or null otherwise. */
   protected <T> T extractLowerBound(BoundExtract<T> bound) {
     return null;
@@ -436,7 +441,7 @@ abstract class InclusiveEvalVisitor extends ExpressionVisitors.BoundVisitor<Bool
    */
   private <T> T uniqueValue(Bound<T> term) {
     int id = term.ref().fieldId();
-    if (mayContainNull(id)) {
+    if (mayContainNull(id) || !hasExactBounds(term.ref())) {
       return null;
     }
 

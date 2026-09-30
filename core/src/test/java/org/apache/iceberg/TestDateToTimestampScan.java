@@ -28,12 +28,14 @@ import java.nio.ByteBuffer;
 import java.time.LocalDate;
 import java.util.Map;
 import java.util.stream.Stream;
+import org.apache.iceberg.exceptions.ValidationException;
 import org.apache.iceberg.expressions.Expressions;
 import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.transforms.Transforms;
 import org.apache.iceberg.types.Conversions;
 import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.Types;
+import org.apache.iceberg.util.DateTimeUtil;
 import org.apache.iceberg.util.JsonUtil;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.io.TempDir;
@@ -291,6 +293,24 @@ class TestDateToTimestampScan {
 
   private static long unitsPerDay(Type type) {
     return type.typeId() == Type.TypeID.TIMESTAMP ? 86_400_000_000L : 86_400_000_000_000L;
+  }
+
+  @ParameterizedTest
+  @MethodSource("timestampTypes")
+  void refusesMetadataDeleteBasedOnSaturatedBounds(Type.PrimitiveType type) throws IOException {
+    Table table = TestTables.create(temp, "test", DATE_SCHEMA, PartitionSpec.unpartitioned(), 3);
+    int day = (int) (Long.MAX_VALUE / unitsPerDay(type)) + 1;
+    table.newAppend().appendFile(file("overflow", Types.DateType.get(), day)).commit();
+    evolve(table, type);
+    String endpoint =
+        type.typeId() == Type.TypeID.TIMESTAMP
+            ? DateTimeUtil.microsToIsoTimestamp(Long.MAX_VALUE)
+            : DateTimeUtil.nanosToIsoTimestamp(Long.MAX_VALUE);
+    assertThatThrownBy(
+            () -> table.newDelete().deleteFromRowFilter(Expressions.equal("d", endpoint)).commit())
+        .isInstanceOf(ValidationException.class)
+        .hasMessageContaining("Cannot delete file where some, but not all, rows match filter");
+    assertPaths(table.newScan(), "overflow.parquet");
   }
 
   private static DataFile file(String name, Type type, Object value) {
