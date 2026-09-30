@@ -33,7 +33,9 @@ class TypePromotions {
       TableMetadata base, String name, Types.NestedField field, Type.PrimitiveType newType) {
     Types.NestedField.Builder builder = Types.NestedField.from(field).ofType(newType);
     if (TypeUtil.isDateToTimestampPromotion(field.type(), newType)) {
-      validateDatePromotion(base, field.fieldId(), name);
+      Preconditions.checkNotNull(
+          base, "Cannot validate date promotion without base table metadata");
+      validateDatePromotion(base.specs(), base.sortOrders(), field.fieldId(), name);
       builder
           .withInitialDefault(promoteDateDefault(field.initialDefaultLiteral(), newType))
           .withWriteDefault(promoteDateDefault(field.writeDefaultLiteral(), newType));
@@ -42,10 +44,36 @@ class TypePromotions {
     return builder.build();
   }
 
-  private static void validateDatePromotion(TableMetadata base, int fieldId, String name) {
-    Preconditions.checkNotNull(base, "Cannot validate date promotion without base table metadata");
+  static void validateDatePromotions(
+      int formatVersion,
+      Schema previous,
+      Schema updated,
+      Iterable<PartitionSpec> specs,
+      Iterable<SortOrder> orders) {
+    if (previous == null) {
+      return;
+    }
 
-    for (PartitionSpec spec : base.specs()) {
+    for (int fieldId : previous.idToName().keySet()) {
+      Type target = updated.findType(fieldId);
+      if (target != null
+          && target.isPrimitiveType()
+          && TypeUtil.isDateToTimestampPromotion(
+              previous.findType(fieldId), target.asPrimitiveType())) {
+        Preconditions.checkArgument(
+            TypeUtil.isPromotionAllowed(
+                formatVersion, previous.findType(fieldId), target.asPrimitiveType()),
+            "Cannot promote date column %s in format version %s: requires v3 or later",
+            updated.findColumnName(fieldId),
+            formatVersion);
+        validateDatePromotion(specs, orders, fieldId, updated.findColumnName(fieldId));
+      }
+    }
+  }
+
+  private static void validateDatePromotion(
+      Iterable<PartitionSpec> specs, Iterable<SortOrder> orders, int fieldId, String name) {
+    for (PartitionSpec spec : specs) {
       for (PartitionField field : spec.fields()) {
         if (field.sourceId() == fieldId) {
           Preconditions.checkArgument(
@@ -58,7 +86,7 @@ class TypePromotions {
       }
     }
 
-    for (SortOrder order : base.sortOrders()) {
+    for (SortOrder order : orders) {
       for (SortField field : order.fields()) {
         if (field.sourceId() == fieldId) {
           Preconditions.checkArgument(

@@ -720,8 +720,122 @@ class TestDateToTimestampSchemaUpdate {
     return Literal.of(day).to(Types.DateType.get());
   }
 
+  @ParameterizedTest
+  @MethodSource("targets")
+  void rejectsPromotionReplayedAgainstConcurrentPartitionHistory(Type.PrimitiveType target) {
+    Table table = create(DATE_SCHEMA, PartitionSpec.unpartitioned(), 3);
+    TableMetadata base = metadata(table);
+    Schema promoted = table.updateSchema().updateColumn("d", target).apply();
+    List<MetadataUpdate> updates = base.updateSchema(promoted).changes();
+    assertThat(updates).anyMatch(MetadataUpdate.SetCurrentSchema.class::isInstance);
+    TableMetadata concurrent =
+        TableMetadata.buildFrom(base)
+            .addPartitionSpec(PartitionSpec.builderFor(base.schema()).bucket("d", 16).build())
+            .build();
+    for (UpdateRequirement requirement : UpdateRequirements.forUpdateTable(base, updates)) {
+      requirement.validate(concurrent);
+    }
+    TableMetadata.Builder replay = TableMetadata.buildFrom(concurrent);
+    assertThatThrownBy(
+            () -> {
+              for (MetadataUpdate update : updates) {
+                MetadataUpdateParser.fromJson(MetadataUpdateParser.toJson(update)).applyTo(replay);
+              }
+            })
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("incompatible transform bucket[16]");
+  }
+
+  @ParameterizedTest
+  @MethodSource("targets")
+  void rejectsPromotionReplayedAgainstConcurrentSortHistory(Type.PrimitiveType target) {
+    Table table = create(DATE_SCHEMA, PartitionSpec.unpartitioned(), 3);
+    TableMetadata base = metadata(table);
+    Schema promoted = table.updateSchema().updateColumn("d", target).apply();
+    List<MetadataUpdate> updates = base.updateSchema(promoted).changes();
+    assertThat(updates).anyMatch(MetadataUpdate.SetCurrentSchema.class::isInstance);
+    TableMetadata concurrent =
+        TableMetadata.buildFrom(base)
+            .addSortOrder(
+                SortOrder.builderFor(base.schema()).asc(Expressions.bucket("d", 16)).build())
+            .build();
+    for (UpdateRequirement requirement : UpdateRequirements.forUpdateTable(base, updates)) {
+      requirement.validate(concurrent);
+    }
+    TableMetadata.Builder replay = TableMetadata.buildFrom(concurrent);
+    assertThatThrownBy(
+            () -> {
+              for (MetadataUpdate update : updates) {
+                MetadataUpdateParser.fromJson(MetadataUpdateParser.toJson(update)).applyTo(replay);
+              }
+            })
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("incompatible transform bucket[16]");
+  }
+
   private static long unitsPerDay(Type type) {
     return type.typeId() == Type.TypeID.TIMESTAMP ? 86_400_000_000L : 86_400_000_000_000L;
+  }
+
+  @ParameterizedTest
+  @MethodSource("targets")
+  void metadataReplayRejectsPromotionBeforeV3(Type.PrimitiveType target) {
+    for (int version : new int[] {1, 2}) {
+      TableMetadata original =
+          TableMetadata.newTableMetadata(
+              DATE_SCHEMA,
+              PartitionSpec.builderFor(DATE_SCHEMA).day("d").build(),
+              SortOrder.unsorted(),
+              temp.toString(),
+              Map.of(),
+              version);
+      Schema promoted = new Schema(1, Types.NestedField.optional(1, "d", target));
+      TableMetadata.Builder builder = TableMetadata.buildFrom(original);
+      if (target.typeId() == Type.TypeID.TIMESTAMP_NANO) {
+        assertThatThrownBy(() -> new MetadataUpdate.AddSchema(promoted).applyTo(builder))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("timestamp_ns is not supported until v3");
+        continue;
+      }
+      new MetadataUpdate.AddSchema(promoted).applyTo(builder);
+      assertThatThrownBy(() -> new MetadataUpdate.SetCurrentSchema(1).applyTo(builder))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("requires v3 or later");
+    }
+  }
+
+  @ParameterizedTest
+  @MethodSource("targets")
+  void replacementDoesNotPromoteHistoricalDateColumns(Type.PrimitiveType target) {
+    int[] versions =
+        target.typeId() == Type.TypeID.TIMESTAMP_NANO ? new int[] {3} : new int[] {1, 2, 3};
+    for (int version : versions) {
+      Schema replacement = new Schema(Types.NestedField.optional(1, "d", target));
+      TableMetadata original =
+          TableMetadata.newTableMetadata(
+              DATE_SCHEMA,
+              PartitionSpec.builderFor(DATE_SCHEMA).identity("d").build(),
+              SortOrder.builderFor(DATE_SCHEMA).asc(Expressions.bucket("d", 16)).build(),
+              temp.toString(),
+              Map.of(),
+              version);
+      original = TableMetadata.buildFrom(original).discardChanges().build();
+      TableMetadata updated =
+          original.buildReplacement(
+              replacement,
+              PartitionSpec.builderFor(replacement).identity("d").build(),
+              SortOrder.unsorted(),
+              temp.toString(),
+              Map.of());
+      assertThat(updated.schema().findType("d")).isEqualTo(target);
+      assertThat(updated.schema().findField("d").fieldId())
+          .isNotEqualTo(original.schema().findField("d").fieldId());
+      TableMetadata.Builder replay = TableMetadata.buildFrom(original);
+      for (MetadataUpdate update : updated.changes()) {
+        MetadataUpdateParser.fromJson(MetadataUpdateParser.toJson(update)).applyTo(replay);
+      }
+      assertThat(replay.build().schema().asStruct()).isEqualTo(updated.schema().asStruct());
+    }
   }
 
   @ParameterizedTest

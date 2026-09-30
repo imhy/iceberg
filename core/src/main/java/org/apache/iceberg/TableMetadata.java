@@ -729,8 +729,21 @@ public class TableMetadata implements Serializable {
         updatedPartitionSpec);
 
     AtomicInteger newLastColumnId = new AtomicInteger(lastColumnId);
+    // Replacement columns do not read the old data, so changing DATE representation needs a new ID.
+    Schema idSource =
+        new Schema(
+            schema().columns(),
+            id -> {
+              Type target = updatedSchema.findType(schema().findColumnName(id));
+              return target != null
+                      && target.isPrimitiveType()
+                      && TypeUtil.isDateToTimestampPromotion(
+                          schema().findType(id), target.asPrimitiveType())
+                  ? newLastColumnId.incrementAndGet()
+                  : id;
+            });
     Schema freshSchema =
-        TypeUtil.assignFreshIds(updatedSchema, schema(), newLastColumnId::incrementAndGet);
+        TypeUtil.assignFreshIds(updatedSchema, idSource, newLastColumnId::incrementAndGet);
 
     // rebuild the partition spec using the new column ids and reassign partition field ids to align
     // with existing
@@ -1131,6 +1144,10 @@ public class TableMetadata implements Serializable {
       Schema schema = schemasById.get(schemaId);
       Preconditions.checkArgument(
           schema != null, "Cannot set current schema to unknown schema: %s", schemaId);
+
+      // REST updates must validate against the history present when the update is applied.
+      TypePromotions.validateDatePromotions(
+          formatVersion, schemasById.get(currentSchemaId), schema, specs, sortOrders);
 
       // rebuild all the partition specs and sort orders for the new current schema
       this.specs =
