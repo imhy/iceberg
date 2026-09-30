@@ -251,10 +251,13 @@ public class FlinkParquetReaders {
               expected);
           ChronoUnit unit =
               expected instanceof Types.TimestampNanoType ? ChronoUnit.NANOS : ChronoUnit.MICROS;
-          long unitsPerMilli = unit == ChronoUnit.NANOS ? 1_000_000L : 1_000L;
           return Optional.of(
               ParquetValueReaders.datesAsTimestamps(
-                  desc, unit, value -> TimestampData.fromEpochMillis(value / unitsPerMilli)));
+                  desc,
+                  unit,
+                  unit == ChronoUnit.NANOS
+                      ? RowDataUtil::timestampFromNanos
+                      : RowDataUtil::timestampFromMicros));
         }
         return Optional.of(new ParquetValueReaders.UnboxedReader<>(desc));
       }
