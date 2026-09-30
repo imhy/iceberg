@@ -34,12 +34,10 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.table.api.DataTypes;
 import org.apache.flink.table.catalog.ResolvedSchema;
 import org.apache.flink.table.data.GenericRowData;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.runtime.typeutils.InternalTypeInfo;
-import org.apache.flink.table.types.DataType;
 import org.apache.iceberg.DataFile;
 import org.apache.iceberg.FileFormat;
 import org.apache.iceberg.HasTableOperations;
@@ -67,6 +65,25 @@ class TestSinkTableFormatVersion {
   private static final Schema DATE_SCHEMA =
       new Schema(Types.NestedField.optional(1, "d", Types.DateType.get()));
   @TempDir Path temp;
+
+  @Test
+  void avoidsReloadingWrappersWithoutDatePromotion() {
+    Table wrapper = wrapper(table(3));
+    TableLoader loader = mock(TableLoader.class);
+    Table captured = SinkUtil.serializableTable(wrapper, loader, wrapper.schema());
+    assertThat(captured.schema().sameSchema(wrapper.schema())).isTrue();
+    assertThat(SinkUtil.formatVersion(captured)).isEqualTo(1);
+    verifyNoInteractions(loader);
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void buildsOrdinarySinkWithStaleWrapperSchema(boolean modern) {
+    Table table = table(3);
+    Table captured = SerializableTable.copyOf(wrapper(table));
+    table.updateSchema().addColumn("extra", Types.IntegerType.get()).commit();
+    buildSink(captured, modern, captured.schema());
+  }
 
   @Test
   void avoidsLoadingTablesWithKnownVersions() {
@@ -213,14 +230,17 @@ class TestSinkTableFormatVersion {
   }
 
   private void buildSink(Table table, boolean modern) {
+    buildSink(table, modern, DATE_SCHEMA);
+  }
+
+  private void buildSink(Table table, boolean modern, Schema inputSchema) {
     StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
     env.setParallelism(1);
     var stream =
         env.fromCollection(
             List.<RowData>of(GenericRowData.of(1)),
-            InternalTypeInfo.of(FlinkSchemaUtil.convert(DATE_SCHEMA)));
-    ResolvedSchema schema =
-        ResolvedSchema.physical(new String[] {"d"}, new DataType[] {DataTypes.DATE()});
+            InternalTypeInfo.of(FlinkSchemaUtil.convert(inputSchema)));
+    ResolvedSchema schema = FlinkSchemaUtil.toResolvedSchema(FlinkSchemaUtil.convert(inputSchema));
     TableLoader loader = TableLoader.fromHadoopTable(table.location());
     if (modern) {
       IcebergSink.forRowData(stream)

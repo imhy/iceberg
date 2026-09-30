@@ -54,7 +54,6 @@ import org.apache.iceberg.Schema;
 import org.apache.iceberg.SerializableTable;
 import org.apache.iceberg.SortOrder;
 import org.apache.iceberg.Table;
-import org.apache.iceberg.TableUtil;
 import org.apache.iceberg.flink.FlinkSchemaUtil;
 import org.apache.iceberg.flink.FlinkWriteConf;
 import org.apache.iceberg.flink.FlinkWriteOptions;
@@ -447,7 +446,11 @@ public class FlinkSink {
         }
       }
 
-      this.table = SinkUtil.serializableTable(table, tableLoader);
+      Schema inputSchema =
+          resolvedSchema != null
+              ? FlinkSchemaUtil.convert(resolvedSchema)
+              : tableSchema != null ? FlinkSchemaUtil.convert(tableSchema) : null;
+      this.table = SinkUtil.serializableTable(table, tableLoader, inputSchema);
       flinkWriteConf = new FlinkWriteConf(table, writeOptions, readableConfig);
 
       // Find out the equality field id list based on the user-provided equality field column names.
@@ -456,8 +459,8 @@ public class FlinkSink {
 
       RowType flinkRowType =
           resolvedSchema != null
-              ? toFlinkRowType(TableUtil.formatVersion(table), table.schema(), resolvedSchema)
-              : toFlinkRowType(TableUtil.formatVersion(table), table.schema(), tableSchema);
+              ? toFlinkRowType(SinkUtil.formatVersion(table), table.schema(), resolvedSchema)
+              : toFlinkRowType(SinkUtil.formatVersion(table), table.schema(), tableSchema);
       int writerParallelism =
           flinkWriteConf.writeParallelism() == null
               ? rowDataInput.getParallelism()
@@ -580,7 +583,10 @@ public class FlinkSink {
         }
       }
 
-      SerializableTable serializableTable = (SerializableTable) SerializableTable.copyOf(table);
+      SerializableTable serializableTable =
+          table instanceof SerializableTable serialized
+              ? serialized
+              : (SerializableTable) SerializableTable.copyOf(table);
       Duration tableRefreshInterval = flinkWriteConf.tableRefreshInterval();
 
       SerializableSupplier<Table> tableSupplier;

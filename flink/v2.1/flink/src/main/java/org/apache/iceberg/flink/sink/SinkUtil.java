@@ -34,13 +34,16 @@ import java.util.Map;
 import java.util.Set;
 import javax.annotation.Nullable;
 import org.apache.flink.annotation.Internal;
+import org.apache.flink.table.types.logical.RowType;
 import org.apache.iceberg.BaseMetadataTable;
 import org.apache.iceberg.FileFormat;
 import org.apache.iceberg.HasTableOperations;
+import org.apache.iceberg.Schema;
 import org.apache.iceberg.SerializableTable;
 import org.apache.iceberg.Snapshot;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.TableUtil;
+import org.apache.iceberg.flink.FlinkSchemaUtil;
 import org.apache.iceberg.flink.FlinkWriteConf;
 import org.apache.iceberg.flink.TableLoader;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
@@ -53,6 +56,7 @@ import org.slf4j.LoggerFactory;
 public class SinkUtil {
 
   private static final long INITIAL_CHECKPOINT_ID = -1L;
+  private static final int LEGACY_FORMAT_VERSION = 1;
 
   public static final String FLINK_JOB_ID = "flink.job-id";
 
@@ -91,6 +95,24 @@ public class SinkUtil {
     } catch (IOException e) {
       throw new UncheckedIOException("Failed to resolve table format version: " + table.name(), e);
     }
+  }
+
+  static SerializableTable serializableTable(
+      Table table, TableLoader tableLoader, Schema inputSchema) {
+    RowType inputType = FlinkSchemaUtil.convert(inputSchema == null ? table.schema() : inputSchema);
+    boolean needsPromotion =
+        !inputType.equals(RowDataTypePromotion.promotedType(inputType, table.schema().asStruct()));
+    if (knownFormatVersion(table) == null && !needsPromotion) {
+      return table instanceof SerializableTable serialized
+          ? serialized
+          : (SerializableTable) SerializableTable.copyOf(table);
+    }
+    return serializableTable(table, tableLoader);
+  }
+
+  static int formatVersion(Table table) {
+    Integer version = knownFormatVersion(table);
+    return version != null ? version : LEGACY_FORMAT_VERSION;
   }
 
   private static Integer knownFormatVersion(Table table) {

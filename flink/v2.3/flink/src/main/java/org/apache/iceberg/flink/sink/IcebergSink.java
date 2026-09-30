@@ -69,7 +69,6 @@ import org.apache.iceberg.Schema;
 import org.apache.iceberg.SerializableTable;
 import org.apache.iceberg.SortOrder;
 import org.apache.iceberg.Table;
-import org.apache.iceberg.TableUtil;
 import org.apache.iceberg.flink.FlinkSchemaUtil;
 import org.apache.iceberg.flink.FlinkWriteConf;
 import org.apache.iceberg.flink.FlinkWriteOptions;
@@ -749,6 +748,14 @@ public class IcebergSink
       return this;
     }
 
+    private Schema inputSchema() {
+      if (resolvedSchema != null) {
+        return FlinkSchemaUtil.convert(resolvedSchema);
+      }
+
+      return tableSchema != null ? FlinkSchemaUtil.convert(tableSchema) : null;
+    }
+
     IcebergSink build() {
 
       Preconditions.checkArgument(
@@ -757,7 +764,7 @@ public class IcebergSink
       Preconditions.checkNotNull(tableLoader(), "Table loader shouldn't be null");
 
       // Set the table if it is not yet set in the builder, so we can do the equalityId checks
-      SerializableTable serializableTable = checkAndGetTable(tableLoader(), table);
+      SerializableTable serializableTable = checkAndGetTable(tableLoader(), table, inputSchema());
       this.table = serializableTable;
       // Init the `flinkWriteConf` here, so we can do the checks
       FlinkWriteConf flinkWriteConf = new FlinkWriteConf(table, writeOptions, readableConfig);
@@ -835,8 +842,8 @@ public class IcebergSink
           flinkWriteConf.uidSuffix(),
           SinkUtil.writeProperties(flinkWriteConf.dataFileFormat(), flinkWriteConf, table),
           resolvedSchema != null
-              ? toFlinkRowType(TableUtil.formatVersion(table), table.schema(), resolvedSchema)
-              : toFlinkRowType(TableUtil.formatVersion(table), table.schema(), tableSchema),
+              ? toFlinkRowType(SinkUtil.formatVersion(table), table.schema(), resolvedSchema)
+              : toFlinkRowType(SinkUtil.formatVersion(table), table.schema(), tableSchema),
           tableSupplier,
           flinkWriteConf,
           equalityFieldIds,
@@ -908,21 +915,22 @@ public class IcebergSink
     return uidSuffix;
   }
 
-  private static SerializableTable checkAndGetTable(TableLoader tableLoader, Table table) {
+  private static SerializableTable checkAndGetTable(
+      TableLoader tableLoader, Table table, Schema inputSchema) {
     if (table == null) {
       if (!tableLoader.isOpen()) {
         tableLoader.open();
       }
 
       try (TableLoader loader = tableLoader) {
-        return SinkUtil.serializableTable(loader.loadTable(), tableLoader);
+        return SinkUtil.serializableTable(loader.loadTable(), tableLoader, inputSchema);
       } catch (IOException e) {
         throw new UncheckedIOException(
             "Failed to load iceberg table from table loader: " + tableLoader, e);
       }
     }
 
-    return SinkUtil.serializableTable(table, tableLoader);
+    return SinkUtil.serializableTable(table, tableLoader, inputSchema);
   }
 
   /**
