@@ -27,6 +27,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.stream.Stream;
 import org.apache.flink.table.data.GenericArrayData;
 import org.apache.flink.table.data.GenericMapData;
@@ -62,6 +63,7 @@ import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.Types;
 import org.apache.iceberg.util.SerializationUtil;
+import org.apache.iceberg.util.UUIDUtil;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -69,6 +71,55 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 class TestDateToTimestampTaskWriter {
   @TempDir Path temp;
+
+  @ParameterizedTest
+  @MethodSource("targets")
+  void writesDateInputAlongsideUuid(Type.PrimitiveType target) throws Exception {
+    Schema schema =
+        new Schema(
+            Types.NestedField.required(1, "id", Types.UUIDType.get()),
+            Types.NestedField.optional(2, "d", target));
+    Schema input =
+        new Schema(
+            schema.findField("id"), Types.NestedField.optional(2, "d", Types.DateType.get()));
+    Table table =
+        new HadoopTables(new Configuration())
+            .create(
+                schema,
+                PartitionSpec.unpartitioned(),
+                Map.of("format-version", "3"),
+                temp.resolve("uuid-table").toString());
+    RowDataTaskWriterFactory factory =
+        new RowDataTaskWriterFactory(
+            SerializableTable.copyOf(table),
+            FlinkSchemaUtil.convert(input),
+            Long.MAX_VALUE,
+            FileFormat.PARQUET,
+            Map.of(),
+            null,
+            false);
+    factory.initialize(0, 0);
+    UUID id = UUID.randomUUID();
+    DataFile[] files;
+    try (TaskWriter<RowData> writer = factory.create()) {
+      writer.write(GenericRowData.of(UUIDUtil.convert(id), 1));
+      files = writer.complete().dataFiles();
+    }
+    AppendFiles append = table.newAppend();
+    for (DataFile file : files) {
+      append.appendFile(file);
+    }
+    append.commit();
+    try (CloseableIterable<Record> rows = IcebergGenerics.read(table).build()) {
+      assertThat(rows)
+          .singleElement()
+          .satisfies(
+              row -> {
+                assertThat(row.getField("id")).isEqualTo(id);
+                assertThat(row.getField("d")).isEqualTo(LocalDate.ofEpochDay(1).atStartOfDay());
+              });
+    }
+  }
 
   static Stream<Type.PrimitiveType> targets() {
     return Stream.of(Types.TimestampType.withoutZone(), Types.TimestampNanoType.withoutZone());

@@ -122,9 +122,7 @@ public class RowDataTaskWriterFactory implements TaskWriterFactory<RowData> {
     this.flinkSchema = (RowType) RowDataTypePromotion.promotedType(flinkSchema, schema.asStruct());
     if (!this.flinkSchema.equals(inputFlinkSchema)) {
       Schema inputSchema =
-          TypeUtil.reassignIds(
-              new Schema(FlinkSchemaUtil.convert(inputFlinkSchema).asStructType().fields()),
-              schema);
+          FlinkSchemaUtil.convert(schema, FlinkSchemaUtil.toResolvedSchema(inputFlinkSchema));
       TypeUtil.validateWriteSchema(TableUtil.formatVersion(table), schema, inputSchema, true, true);
     }
     this.spec = spec;
