@@ -21,7 +21,6 @@ package org.apache.iceberg.spark.source;
 import java.util.List;
 import org.apache.iceberg.MetadataColumns;
 import org.apache.iceberg.Schema;
-import org.apache.iceberg.expressions.Literal;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.TypeUtil;
@@ -59,13 +58,7 @@ final class SparkWriteSchema extends TypeUtil.SchemaVisitor<Type> {
     for (int i = 0; i < types.size(); i++) {
       Types.NestedField field = struct.fields().get(i);
       Type type = types.get(i);
-      Types.NestedField.Builder builder = Types.NestedField.from(field).ofType(type);
-      if (isDatePromotion(field.type(), type)) {
-        builder
-            .withInitialDefault(promoteDefault(field.initialDefaultLiteral(), type))
-            .withWriteDefault(promoteDefault(field.writeDefaultLiteral(), type));
-      }
-      fields.add(builder.build());
+      fields.add(Types.NestedField.from(field).ofType(type).build());
     }
     return Types.StructType.of(fields);
   }
@@ -110,9 +103,5 @@ final class SparkWriteSchema extends TypeUtil.SchemaVisitor<Type> {
     return target != null
         && target.isPrimitiveType()
         && TypeUtil.isDateToTimestampPromotion(input, target.asPrimitiveType());
-  }
-
-  private static Literal<?> promoteDefault(Literal<?> value, Type target) {
-    return value == null ? null : value.to(target);
   }
 }

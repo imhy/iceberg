@@ -18,7 +18,6 @@
  */
 package org.apache.iceberg;
 
-import org.apache.iceberg.expressions.Literal;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.TypeUtil;
@@ -36,9 +35,6 @@ class TypePromotions {
       Preconditions.checkNotNull(
           base, "Cannot validate date promotion without base table metadata");
       validateDatePromotion(base.specs(), base.sortOrders(), field.fieldId(), name);
-      builder
-          .withInitialDefault(promoteDateDefault(field.initialDefaultLiteral(), newType))
-          .withWriteDefault(promoteDateDefault(field.writeDefaultLiteral(), newType));
     }
 
     return builder.build();
@@ -106,13 +102,5 @@ class TypePromotions {
       case "year", "month", "day", "void" -> true;
       default -> false;
     };
-  }
-
-  private static Literal<?> promoteDateDefault(Literal<?> value, Type.PrimitiveType target) {
-    if (value == null) {
-      return null;
-    }
-
-    return value.to(target);
   }
 }

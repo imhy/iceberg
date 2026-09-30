@@ -19,7 +19,6 @@
 package org.apache.iceberg.expressions;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.math.BigDecimal;
 import java.nio.ByteBuffer;
@@ -44,14 +43,31 @@ public class TestMiscLiteralConversions {
   }
 
   @Test
-  void dateToTimestampRejectsOverflow() {
-    Literal<Integer> date = Literal.of(Integer.MAX_VALUE).to(Types.DateType.get());
+  void dateToTimestampUsesRangeSentinels() {
     for (Type target :
         List.of(Types.TimestampType.withoutZone(), Types.TimestampNanoType.withoutZone())) {
-      assertThatThrownBy(() -> date.to(target))
-          .isInstanceOf(ArithmeticException.class)
-          .hasMessageContaining("overflow");
+      assertThat(Literal.of(Integer.MAX_VALUE).to(Types.DateType.get()).to(target))
+          .isSameAs(Literals.aboveMax());
+      assertThat(Literal.of(Integer.MIN_VALUE).to(Types.DateType.get()).to(target))
+          .isSameAs(Literals.belowMin());
     }
+  }
+
+  @Test
+  void bindsOutOfRangeDatePredicates() {
+    Types.StructType struct =
+        Types.StructType.of(
+            Types.NestedField.required(1, "ts", Types.TimestampNanoType.withoutZone()));
+    Literal<Integer> future = Literal.of("9999-12-31").to(Types.DateType.get());
+    Literal<Integer> past = Literal.of("0001-01-01").to(Types.DateType.get());
+    assertThat(Binder.bind(struct, Expressions.lessThan("ts", future), true))
+        .isEqualTo(Expressions.alwaysTrue());
+    assertThat(Binder.bind(struct, Expressions.greaterThan("ts", past), true))
+        .isEqualTo(Expressions.alwaysTrue());
+    assertThat(Binder.bind(struct, Expressions.equal("ts", future), true))
+        .isEqualTo(Expressions.alwaysFalse());
+    assertThat(Binder.bind(struct, Expressions.in("ts", past, future), true))
+        .isEqualTo(Expressions.alwaysFalse());
   }
 
   @Test

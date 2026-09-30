@@ -327,16 +327,13 @@ class SchemaUpdate implements UpdateSchema {
         "Cannot update a column that will be deleted: %s",
         field.name());
 
-    // if the value can be converted to the expected type, check if it is already set
-    // if it can't be converted, the builder will throw an exception
-    Literal<?> converted = newDefault != null ? newDefault.to(field.type()) : null;
-    if (converted != null && Objects.equals(field.writeDefault(), converted.value())) {
+    Types.NestedField newField = Types.NestedField.from(field).withWriteDefault(newDefault).build();
+    if (Objects.equals(field.writeDefault(), newField.writeDefault())) {
       return this;
     }
 
     // write default is always set and initial default is only set if the field requires one
     int fieldId = field.fieldId();
-    Types.NestedField newField = Types.NestedField.from(field).withWriteDefault(newDefault).build();
     updates.put(fieldId, newField);
 
     return this;

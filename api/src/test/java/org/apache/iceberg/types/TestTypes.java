@@ -22,10 +22,40 @@ import static org.apache.iceberg.types.Types.NestedField.optional;
 import static org.apache.iceberg.types.Types.NestedField.required;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import org.apache.iceberg.expressions.Literal;
 import org.junit.jupiter.api.Test;
 
 public class TestTypes {
+
+  @Test
+  void rejectsOutOfRangeDefaults() {
+    Type type = Types.TimestampNanoType.withoutZone();
+    for (String value : new String[] {"0001-01-01", "3000-01-01"}) {
+      Literal<?> date = Literal.of(value).to(Types.DateType.get());
+      for (Literal<?> literal : new Literal<?>[] {date, date.to(type)}) {
+        assertThatThrownBy(
+                () ->
+                    Types.NestedField.optional("ts")
+                        .withId(1)
+                        .ofType(type)
+                        .withInitialDefault(literal)
+                        .build())
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("Cannot cast default value");
+        assertThatThrownBy(
+                () ->
+                    Types.NestedField.optional("ts")
+                        .withId(1)
+                        .ofType(type)
+                        .withWriteDefault(literal)
+                        .build())
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("Cannot cast default value");
+      }
+    }
+  }
 
   @Test
   public void fromTypeName() {

@@ -24,6 +24,7 @@ import org.apache.iceberg.Schema;
 import org.apache.iceberg.UpdateSchema;
 import org.apache.iceberg.expressions.Literal;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
+import org.apache.iceberg.types.Conversions;
 import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.TypeUtil;
 import org.apache.iceberg.types.Types;
@@ -200,7 +201,8 @@ public class UnionByNameVisitor extends SchemaWithPartnerVisitor<Integer, Boolea
         && existingField.type().isPrimitiveType()
         && TypeUtil.isDateToTimestampPromotion(
             field.type(), existingField.type().asPrimitiveType())) {
-      // The incoming DATE keeps the table's wider type, so its default must use that type too.
+      // Defaults must be representable even though predicate literals may use range sentinels.
+      Conversions.fromByteBuffer(existingField.type(), writeDefault.toByteBuffer());
       writeDefault = writeDefault.to(existingField.type());
     }
     boolean needsDefaultUpdate =

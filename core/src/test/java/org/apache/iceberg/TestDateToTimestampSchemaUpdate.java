@@ -185,8 +185,8 @@ class TestDateToTimestampSchemaUpdate {
         UpdateSchema update = table.updateSchema();
         if (day < minimum || day > maximum) {
           assertThatThrownBy(() -> update.updateColumn("d", target))
-              .isInstanceOf(ArithmeticException.class)
-              .hasMessage("long overflow");
+              .isInstanceOf(IllegalArgumentException.class)
+              .hasMessageContaining("Cannot cast default value");
           assertThat(update.apply().asStruct()).isEqualTo(table.schema().asStruct());
         } else {
           update.updateColumn("d", target).commit();
@@ -836,6 +836,23 @@ class TestDateToTimestampSchemaUpdate {
       }
       assertThat(replay.build().schema().asStruct()).isEqualTo(updated.schema().asStruct());
     }
+  }
+
+  @ParameterizedTest
+  @MethodSource("targets")
+  void rejectsOutOfRangeDefaultsAtUpdateBoundary(Type.PrimitiveType target) {
+    Table table =
+        create(
+            new Schema(Types.NestedField.optional(1, "ts", target)),
+            PartitionSpec.unpartitioned(),
+            3);
+    int days = (int) (Long.MAX_VALUE / unitsPerDay(target)) + 1;
+    assertThatThrownBy(() -> table.updateSchema().updateColumnDefault("ts", date(days)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Cannot cast default value");
+    assertThatThrownBy(() -> table.updateSchema().addColumn("added", target, null, date(days)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Cannot cast default value");
   }
 
   @ParameterizedTest
