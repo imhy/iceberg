@@ -34,6 +34,9 @@ import org.apache.flink.table.expressions.ResolvedExpression;
 import org.apache.flink.table.expressions.ValueLiteralExpression;
 import org.apache.flink.table.functions.BuiltInFunctionDefinitions;
 import org.apache.flink.table.functions.FunctionDefinition;
+import org.apache.flink.table.types.logical.LocalZonedTimestampType;
+import org.apache.flink.table.types.logical.LogicalType;
+import org.apache.flink.table.types.logical.TimestampType;
 import org.apache.iceberg.expressions.Expression;
 import org.apache.iceberg.expressions.Expression.Operation;
 import org.apache.iceberg.expressions.Expressions;
@@ -172,8 +175,9 @@ public class FlinkFilters {
     org.apache.flink.table.expressions.Expression right = args.get(1);
 
     if (left instanceof FieldReferenceExpression && right instanceof ValueLiteralExpression) {
-      String name = ((FieldReferenceExpression) left).getName();
-      return convertLiteral((ValueLiteralExpression) right)
+      FieldReferenceExpression field = (FieldReferenceExpression) left;
+      return convertLiteral(
+              (ValueLiteralExpression) right, field.getOutputDataType().getLogicalType())
           .flatMap(
               lit -> {
                 if (lit instanceof String) {
@@ -182,7 +186,7 @@ public class FlinkFilters {
                   // exclude special char of LIKE
                   // '_' is the wildcard of the SQL LIKE
                   if (!pattern.contains("_") && matcher.matches()) {
-                    return Optional.of(Expressions.startsWith(name, matcher.group(1)));
+                    return Optional.of(Expressions.startsWith(field.getName(), matcher.group(1)));
                   }
                 }
 
@@ -209,24 +213,32 @@ public class FlinkFilters {
     return Optional.empty();
   }
 
-  private static Optional<Object> convertLiteral(ValueLiteralExpression expression) {
+  private static Optional<Object> convertLiteral(
+      ValueLiteralExpression expression, LogicalType fieldType) {
     Optional<?> value =
         expression.getValueAs(
             expression.getOutputDataType().getLogicalType().getDefaultConversion());
-    return value.map(
-        o -> {
-          if (o instanceof LocalDateTime) {
-            return DateTimeUtil.microsFromTimestamp((LocalDateTime) o);
-          } else if (o instanceof Instant) {
-            return DateTimeUtil.microsFromInstant((Instant) o);
-          } else if (o instanceof LocalTime) {
-            return DateTimeUtil.microsFromTime((LocalTime) o);
-          } else if (o instanceof LocalDate) {
-            return DateTimeUtil.daysFromDate((LocalDate) o);
-          }
+    return value.flatMap(o -> convertLiteralValue(o, fieldType));
+  }
 
-          return o;
-        });
+  // Timestamp literals are converted to ISO strings so that binding parses them at the column's
+  // precision instead of truncating nano literals to micros. The string only round-trips through
+  // the binder when the field's zone-ness matches the literal, so mismatched combinations are not
+  // pushed down.
+  private static Optional<Object> convertLiteralValue(Object value, LogicalType fieldType) {
+    if (value instanceof LocalDateTime) {
+      return fieldType instanceof TimestampType ? Optional.of(value.toString()) : Optional.empty();
+    } else if (value instanceof Instant) {
+      return fieldType instanceof LocalZonedTimestampType
+          ? Optional.of(value.toString())
+          : Optional.empty();
+    } else if (value instanceof LocalTime) {
+      return Optional.of(DateTimeUtil.microsFromTime((LocalTime) value));
+    } else if (value instanceof LocalDate) {
+      return Optional.of(DateTimeUtil.daysFromDate((LocalDate) value));
+    }
+
+    return Optional.of(value);
   }
 
   private static Optional<Expression> convertFieldAndLiteral(
@@ -247,17 +259,20 @@ public class FlinkFilters {
     org.apache.flink.table.expressions.Expression right = args.get(1);
 
     if (left instanceof FieldReferenceExpression && right instanceof ValueLiteralExpression) {
-      String name = ((FieldReferenceExpression) left).getName();
-      Optional<Object> lit = convertLiteral((ValueLiteralExpression) right);
+      FieldReferenceExpression field = (FieldReferenceExpression) left;
+      Optional<Object> lit =
+          convertLiteral(
+              (ValueLiteralExpression) right, field.getOutputDataType().getLogicalType());
       if (lit.isPresent()) {
-        return Optional.of(convertLR.apply(name, lit.get()));
+        return Optional.of(convertLR.apply(field.getName(), lit.get()));
       }
     } else if (left instanceof ValueLiteralExpression
         && right instanceof FieldReferenceExpression) {
-      Optional<Object> lit = convertLiteral((ValueLiteralExpression) left);
-      String name = ((FieldReferenceExpression) right).getName();
+      FieldReferenceExpression field = (FieldReferenceExpression) right;
+      Optional<Object> lit =
+          convertLiteral((ValueLiteralExpression) left, field.getOutputDataType().getLogicalType());
       if (lit.isPresent()) {
-        return Optional.of(convertRL.apply(name, lit.get()));
+        return Optional.of(convertRL.apply(field.getName(), lit.get()));
       }
     }
 

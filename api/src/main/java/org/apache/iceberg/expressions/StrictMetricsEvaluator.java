@@ -134,7 +134,12 @@ public class StrictMetricsEvaluator {
     protected <T> T lowerBound(BoundReference<T> ref) {
       int id = ref.fieldId();
       if (lowerBounds != null && lowerBounds.containsKey(id)) {
-        return Conversions.fromByteBuffer(ref.type(), lowerBounds.get(id));
+        try {
+          return Conversions.fromByteBuffer(ref.type(), lowerBounds.get(id));
+        } catch (ArithmeticException e) {
+          // A conservative bound outside the type's range cannot prove that all rows match.
+          return null;
+        }
       }
 
       return null;
@@ -144,7 +149,12 @@ public class StrictMetricsEvaluator {
     protected <T> T upperBound(BoundReference<T> ref) {
       int id = ref.fieldId();
       if (upperBounds != null && upperBounds.containsKey(id)) {
-        return Conversions.fromByteBuffer(ref.type(), upperBounds.get(id));
+        try {
+          return Conversions.fromByteBuffer(ref.type(), upperBounds.get(id));
+        } catch (ArithmeticException e) {
+          // A conservative bound outside the type's range cannot prove that all rows match.
+          return null;
+        }
       }
 
       return null;

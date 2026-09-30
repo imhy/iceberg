@@ -152,7 +152,9 @@ abstract class SparkWrite implements Write, RequiresDistributionAndOrdering {
 
   @Override
   public Distribution requiredDistribution() {
-    Distribution distribution = writeRequirements.distribution();
+    Distribution distribution =
+        SparkTypePromotion.distribution(
+            writeRequirements.distribution(), writeSchema, table.schema());
     LOG.debug("Requesting {} as write distribution for table {}", distribution, table.name());
     return distribution;
   }
@@ -164,7 +166,8 @@ abstract class SparkWrite implements Write, RequiresDistributionAndOrdering {
 
   @Override
   public SortOrder[] requiredOrdering() {
-    SortOrder[] ordering = writeRequirements.ordering();
+    SortOrder[] ordering =
+        SparkTypePromotion.ordering(writeRequirements.ordering(), writeSchema, table.schema());
     LOG.debug("Requesting {} as write ordering for table {}", ordering, table.name());
     return ordering;
   }
@@ -695,7 +698,8 @@ abstract class SparkWrite implements Write, RequiresDistributionAndOrdering {
     private final FileFormat format;
     private final int outputSpecId;
     private final long targetFileSize;
-    private final Schema writeSchema;
+    private final Schema outputSchema;
+    private final StructType outputType;
     private final StructType dsSchema;
     private final boolean useFanoutWriter;
     private final String queryId;
@@ -717,7 +721,12 @@ abstract class SparkWrite implements Write, RequiresDistributionAndOrdering {
       this.format = format;
       this.outputSpecId = outputSpecId;
       this.targetFileSize = targetFileSize;
-      this.writeSchema = writeSchema;
+      Schema tableSchema = tableBroadcast.value().schema();
+      this.outputType = SparkTypePromotion.writeType(dsSchema, writeSchema, tableSchema);
+      this.outputSchema =
+          outputType.equals(dsSchema)
+              ? writeSchema
+              : SparkWriteSchema.promote(writeSchema, tableSchema);
       this.dsSchema = dsSchema;
       this.useFanoutWriter = useFanoutWriter;
       this.queryId = queryId;
@@ -744,30 +753,34 @@ abstract class SparkWrite implements Write, RequiresDistributionAndOrdering {
       SparkFileWriterFactory writerFactory =
           SparkFileWriterFactory.builderFor(table)
               .dataFileFormat(format)
-              .dataSchema(writeSchema)
-              .dataSparkType(dsSchema)
+              .dataSchema(outputSchema)
+              .dataSparkType(outputType)
               .writeProperties(writeProperties)
               .dataSortOrder(table.sortOrders().get(sortOrderId))
               .build();
 
-      Function<InternalRow, InternalRow> rowLineageExtractor = new ExtractRowLineage(writeSchema);
+      Function<InternalRow, InternalRow> rowLineageExtractor = new ExtractRowLineage(outputSchema);
 
+      DataWriter<InternalRow> writer;
       if (spec.isUnpartitioned()) {
-        return new UnpartitionedDataWriter(
-            writerFactory, fileFactory, io, spec, targetFileSize, rowLineageExtractor);
+        writer =
+            new UnpartitionedDataWriter(
+                writerFactory, fileFactory, io, spec, targetFileSize, rowLineageExtractor);
 
       } else {
-        return new PartitionedDataWriter(
-            writerFactory,
-            fileFactory,
-            io,
-            spec,
-            writeSchema,
-            dsSchema,
-            targetFileSize,
-            useFanoutWriter,
-            rowLineageExtractor);
+        writer =
+            new PartitionedDataWriter(
+                writerFactory,
+                fileFactory,
+                io,
+                spec,
+                outputSchema,
+                outputType,
+                targetFileSize,
+                useFanoutWriter,
+                rowLineageExtractor);
       }
+      return SparkTypePromotion.wrap(writer, dsSchema, outputType);
     }
   }
 

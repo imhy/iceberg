@@ -406,6 +406,21 @@ class Literals {
       if (type.typeId() == Type.TypeID.DATE) {
         return (Literal<T>) this;
       }
+      if (type.typeId() == Type.TypeID.TIMESTAMP
+          && !((Types.TimestampType) type).shouldAdjustToUTC()) {
+        try {
+          return (Literal<T>) new TimestampLiteral(DateTimeUtil.microsFromDays(value()));
+        } catch (ArithmeticException e) {
+          return value() < 0 ? belowMin() : aboveMax();
+        }
+      } else if (type.typeId() == Type.TypeID.TIMESTAMP_NANO
+          && !((Types.TimestampNanoType) type).shouldAdjustToUTC()) {
+        try {
+          return (Literal<T>) new TimestampNanoLiteral(DateTimeUtil.nanosFromDays(value()));
+        } catch (ArithmeticException e) {
+          return value() < 0 ? belowMin() : aboveMax();
+        }
+      }
       return null;
     }
 

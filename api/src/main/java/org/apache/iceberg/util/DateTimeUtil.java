@@ -38,6 +38,10 @@ public class DateTimeUtil {
   public static final long MICROS_PER_SECOND = 1_000_000L;
   private static final long NANOS_PER_SECOND = 1_000_000_000L;
   private static final long NANOS_PER_MICRO = 1_000L;
+  private static final long MICROS_PER_DAY = 86_400L * MICROS_PER_SECOND;
+  private static final long NANOS_PER_DAY = 86_400L * NANOS_PER_SECOND;
+  private static final int MAX_MICROS_DAY = (int) (Long.MAX_VALUE / MICROS_PER_DAY);
+  private static final int MAX_NANOS_DAY = (int) (Long.MAX_VALUE / NANOS_PER_DAY);
 
   private static final DateTimeFormatter FORMATTER =
       new DateTimeFormatterBuilder()
@@ -48,6 +52,48 @@ public class DateTimeUtil {
 
   public static LocalDate dateFromDays(int daysFromEpoch) {
     return ChronoUnit.DAYS.addTo(EPOCH_DAY, daysFromEpoch);
+  }
+
+  /** Returns midnight in microseconds, failing if the date exceeds the timestamp range. */
+  public static long microsFromDays(int daysFromEpoch) {
+    return Math.multiplyExact((long) daysFromEpoch, MICROS_PER_DAY);
+  }
+
+  /** Returns midnight in nanoseconds, failing if the date exceeds the timestamp range. */
+  public static long nanosFromDays(int daysFromEpoch) {
+    return Math.multiplyExact((long) daysFromEpoch, NANOS_PER_DAY);
+  }
+
+  /**
+   * Returns midnight in microseconds, saturating to {@link Long#MIN_VALUE} for dates before the
+   * minimum timestamp and {@link Long#MAX_VALUE} for dates after the maximum timestamp. Intended
+   * for conservative bounds, which may enclose values outside the target type's range; data values
+   * must use {@link #microsFromDays(int)}.
+   */
+  public static long microsFromDaysClamped(int daysFromEpoch) {
+    if (daysFromEpoch > MAX_MICROS_DAY) {
+      return Long.MAX_VALUE;
+    } else if (daysFromEpoch < -MAX_MICROS_DAY) {
+      return Long.MIN_VALUE;
+    }
+
+    return microsFromDays(daysFromEpoch);
+  }
+
+  /**
+   * Returns midnight in nanoseconds, saturating to {@link Long#MIN_VALUE} for dates before the
+   * minimum timestamp and {@link Long#MAX_VALUE} for dates after the maximum timestamp. Intended
+   * for conservative bounds, which may enclose values outside the target type's range; data values
+   * must use {@link #nanosFromDays(int)}.
+   */
+  public static long nanosFromDaysClamped(int daysFromEpoch) {
+    if (daysFromEpoch > MAX_NANOS_DAY) {
+      return Long.MAX_VALUE;
+    } else if (daysFromEpoch < -MAX_NANOS_DAY) {
+      return Long.MIN_VALUE;
+    }
+
+    return nanosFromDays(daysFromEpoch);
   }
 
   public static int daysFromDate(LocalDate date) {

@@ -19,13 +19,80 @@
 package org.apache.iceberg.util;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import org.apache.iceberg.transforms.Transforms;
 import org.apache.iceberg.types.Types;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 public class TestDateTimeUtil {
+  @ParameterizedTest
+  @ValueSource(ints = {-106751991, -1, 0, 1, 106751991})
+  void convertsDaysToMicros(int days) {
+    assertThat(DateTimeUtil.microsFromDays(days))
+        .isEqualTo(
+            ChronoUnit.MICROS.between(
+                DateTimeUtil.EPOCH.toLocalDateTime(),
+                DateTimeUtil.dateFromDays(days).atStartOfDay()));
+  }
+
+  @ParameterizedTest
+  @ValueSource(ints = {-106751, -1, 0, 1, 106751})
+  void convertsDaysToNanos(int days) {
+    assertThat(DateTimeUtil.nanosFromDays(days))
+        .isEqualTo(
+            ChronoUnit.NANOS.between(
+                DateTimeUtil.EPOCH.toLocalDateTime(),
+                DateTimeUtil.dateFromDays(days).atStartOfDay()));
+  }
+
+  @ParameterizedTest
+  @ValueSource(ints = {Integer.MIN_VALUE, -106751992, 106751992, Integer.MAX_VALUE})
+  void rejectsDatesOutsideMicrosecondRange(int days) {
+    assertThatThrownBy(() -> DateTimeUtil.microsFromDays(days))
+        .isInstanceOf(ArithmeticException.class)
+        .hasMessageContaining("overflow");
+  }
+
+  @ParameterizedTest
+  @ValueSource(ints = {Integer.MIN_VALUE, -106752, 106752, Integer.MAX_VALUE})
+  void rejectsDatesOutsideNanosecondRange(int days) {
+    assertThatThrownBy(() -> DateTimeUtil.nanosFromDays(days))
+        .isInstanceOf(ArithmeticException.class)
+        .hasMessageContaining("overflow");
+  }
+
+  @ParameterizedTest
+  @ValueSource(ints = {-106751991, -1, 0, 1, 106751991})
+  void clampsDaysToMicrosWithinRange(int days) {
+    assertThat(DateTimeUtil.microsFromDaysClamped(days))
+        .isEqualTo(DateTimeUtil.microsFromDays(days));
+  }
+
+  @ParameterizedTest
+  @ValueSource(ints = {-106751, -1, 0, 1, 106751})
+  void clampsDaysToNanosWithinRange(int days) {
+    assertThat(DateTimeUtil.nanosFromDaysClamped(days)).isEqualTo(DateTimeUtil.nanosFromDays(days));
+  }
+
+  @ParameterizedTest
+  @ValueSource(ints = {Integer.MIN_VALUE, -106751992, 106751992, Integer.MAX_VALUE})
+  void clampsDaysToMicrosOutsideRange(int days) {
+    assertThat(DateTimeUtil.microsFromDaysClamped(days))
+        .isEqualTo(days < 0 ? Long.MIN_VALUE : Long.MAX_VALUE);
+  }
+
+  @ParameterizedTest
+  @ValueSource(ints = {Integer.MIN_VALUE, -106752, 106752, Integer.MAX_VALUE})
+  void clampsDaysToNanosOutsideRange(int days) {
+    assertThat(DateTimeUtil.nanosFromDaysClamped(days))
+        .isEqualTo(days < 0 ? Long.MIN_VALUE : Long.MAX_VALUE);
+  }
+
   @Test
   public void microsToMillis() {
     assertThat(DateTimeUtil.microsToMillis(1510871468000001L)).isEqualTo(1510871468000L);

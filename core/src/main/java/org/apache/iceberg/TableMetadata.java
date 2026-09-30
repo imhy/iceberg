@@ -42,7 +42,9 @@ import org.apache.iceberg.relocated.com.google.common.collect.Iterables;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.relocated.com.google.common.collect.Sets;
+import org.apache.iceberg.transforms.Transform;
 import org.apache.iceberg.transforms.Transforms;
+import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.TypeUtil;
 import org.apache.iceberg.util.LocationUtil;
 import org.apache.iceberg.util.Pair;
@@ -727,8 +729,21 @@ public class TableMetadata implements Serializable {
         updatedPartitionSpec);
 
     AtomicInteger newLastColumnId = new AtomicInteger(lastColumnId);
+    // Replacement columns do not read the old data, so changing DATE representation needs a new ID.
+    Schema idSource =
+        new Schema(
+            schema().columns(),
+            id -> {
+              Type target = updatedSchema.findType(schema().findColumnName(id));
+              return target != null
+                      && target.isPrimitiveType()
+                      && TypeUtil.isDateToTimestampPromotion(
+                          schema().findType(id), target.asPrimitiveType())
+                  ? newLastColumnId.incrementAndGet()
+                  : id;
+            });
     Schema freshSchema =
-        TypeUtil.assignFreshIds(updatedSchema, schema(), newLastColumnId::incrementAndGet);
+        TypeUtil.assignFreshIds(updatedSchema, idSource, newLastColumnId::incrementAndGet);
 
     // rebuild the partition spec using the new column ids and reassign partition field ids to align
     // with existing
@@ -771,7 +786,12 @@ public class TableMetadata implements Serializable {
 
     // add all the fields to the builder. IDs should not change.
     for (PartitionField field : partitionSpec.fields()) {
-      specBuilder.add(field.sourceId(), field.fieldId(), field.name(), field.transform());
+      specBuilder.add(
+          field.sourceId(),
+          field.fieldId(),
+          field.name(),
+          updateTransformSchema(
+              partitionSpec.schema(), schema, field.sourceId(), field.transform()));
     }
 
     // build without validation because the schema may have changed in a way that makes this spec
@@ -786,13 +806,28 @@ public class TableMetadata implements Serializable {
     // add all the fields to the builder. IDs should not change.
     for (SortField field : sortOrder.fields()) {
       builder.addSortField(
-          field.transform(), field.sourceId(), field.direction(), field.nullOrder());
+          updateTransformSchema(sortOrder.schema(), schema, field.sourceId(), field.transform()),
+          field.sourceId(),
+          field.direction(),
+          field.nullOrder());
     }
 
     // build without validation because the schema may have changed in a way that makes this order
     // invalid. the order
     // should still be preserved so that older metadata can be interpreted.
     return builder.buildUnchecked();
+  }
+
+  private static Transform<?, ?> updateTransformSchema(
+      Schema oldSchema, Schema newSchema, int sourceId, Transform<?, ?> transform) {
+    Type oldType = oldSchema.findType(sourceId);
+    Type newType = newSchema.findType(sourceId);
+    if (oldType != null && newType != null && !oldType.equals(newType)) {
+      // Discard any type binding retained from the previous schema.
+      return Transforms.fromString(transform.toString());
+    }
+
+    return transform;
   }
 
   private static PartitionSpec freshSpec(int specId, Schema schema, PartitionSpec partitionSpec) {
@@ -1109,6 +1144,10 @@ public class TableMetadata implements Serializable {
       Schema schema = schemasById.get(schemaId);
       Preconditions.checkArgument(
           schema != null, "Cannot set current schema to unknown schema: %s", schemaId);
+
+      // REST updates must validate against the history present when the update is applied.
+      TypePromotions.validateDatePromotions(
+          formatVersion, schemasById.get(currentSchemaId), schema, specs, sortOrders);
 
       // rebuild all the partition specs and sort orders for the new current schema
       this.specs =

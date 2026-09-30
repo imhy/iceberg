@@ -897,10 +897,17 @@ public class Types {
         throw new IllegalArgumentException(
             String.format("Invalid default value for %s: %s (must be null)", type, defaultValue));
       } else if (defaultValue != null) {
-        Literal<?> typedDefault = defaultValue.to(type);
-        Preconditions.checkArgument(
-            typedDefault != null, "Cannot cast default value to %s: %s", type, defaultValue);
-        return typedDefault;
+        try {
+          Literal<?> typedDefault = defaultValue.to(type);
+          Preconditions.checkArgument(
+              typedDefault != null, "Cannot cast default value to %s: %s", type, defaultValue);
+          // Predicate range sentinels have no value and cannot be persisted as defaults.
+          typedDefault.value();
+          return typedDefault;
+        } catch (UnsupportedOperationException e) {
+          throw new IllegalArgumentException(
+              String.format("Cannot cast default value to %s: %s", type, defaultValue), e);
+        }
       }
 
       return null;

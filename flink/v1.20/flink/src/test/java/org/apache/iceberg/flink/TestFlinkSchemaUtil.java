@@ -42,6 +42,7 @@ import org.apache.iceberg.Parameter;
 import org.apache.iceberg.ParameterizedTestExtension;
 import org.apache.iceberg.Parameters;
 import org.apache.iceberg.Schema;
+import org.apache.iceberg.expressions.Literal;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.relocated.com.google.common.collect.Sets;
 import org.apache.iceberg.types.Type;
@@ -52,6 +53,27 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 @ExtendWith(ParameterizedTestExtension.class)
 public class TestFlinkSchemaUtil {
+
+  @Test
+  @SuppressWarnings("deprecation")
+  void restoresDefaultsWhenConvertingWithBaseSchema() {
+    Types.NestedField field =
+        Types.NestedField.optional("value")
+            .withId(7)
+            .ofType(Types.IntegerType.get())
+            .withInitialDefault(Literal.of(3))
+            .withWriteDefault(Literal.of(5))
+            .build();
+    Schema schema = new Schema(Types.NestedField.optional(1, "nested", Types.StructType.of(field)));
+    RowType rowType = FlinkSchemaUtil.convert(schema);
+    for (Schema converted :
+        List.of(
+            FlinkSchemaUtil.convert(schema, FlinkSchemaUtil.toResolvedSchema(rowType)),
+            FlinkSchemaUtil.convert(schema, FlinkSchemaUtil.toSchema(rowType)))) {
+      assertThat(converted.findField(7).initialDefault()).isEqualTo(3);
+      assertThat(converted.findField(7).writeDefault()).isEqualTo(5);
+    }
+  }
 
   @Parameter private boolean isTableSchema;
 

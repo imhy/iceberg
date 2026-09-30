@@ -52,9 +52,15 @@ import org.apache.flink.streaming.util.OneInputStreamOperatorTestHarness;
 import org.apache.flink.table.data.GenericRowData;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.data.StringData;
+import org.apache.flink.table.runtime.typeutils.RowDataSerializer;
+import org.apache.iceberg.Schema;
 import org.apache.iceberg.SortKey;
+import org.apache.iceberg.SortOrder;
+import org.apache.iceberg.flink.FlinkSchemaUtil;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
+import org.apache.iceberg.types.Types;
+import org.apache.iceberg.util.DateTimeUtil;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -66,6 +72,38 @@ import org.mockito.Mockito;
 public class TestDataStatisticsOperator {
 
   private Environment env;
+
+  @Test
+  void collectsTimestampKeysFromDateInput() throws Exception {
+    Schema schema =
+        new Schema(Types.NestedField.required(1, "d", Types.TimestampType.withoutZone()));
+    Schema inputSchema = new Schema(Types.NestedField.required(1, "d", Types.DateType.get()));
+    SortOrder order = SortOrder.builderFor(schema).asc("d").build();
+    DataStatisticsOperator operator =
+        new DataStatisticsOperator(
+            null,
+            "dateStatistics",
+            schema,
+            FlinkSchemaUtil.convert(inputSchema),
+            order,
+            new MockOperatorEventGateway(),
+            2,
+            StatisticsType.Map);
+    try (OneInputStreamOperatorTestHarness<RowData, StatisticsOrRecord> harness =
+        new OneInputStreamOperatorTestHarness<>(operator, 1, 1, 0)) {
+      harness.setup(
+          new StatisticsOrRecordSerializer(
+              new GlobalStatisticsSerializer(new SortKeySerializer(schema, order)),
+              new RowDataSerializer(FlinkSchemaUtil.convert(inputSchema))));
+      harness.open();
+      operator.initializeState(getStateContext());
+      operator.processElement(new StreamRecord<>(GenericRowData.of(1)));
+      SortKey expected = new SortKey(schema, order);
+      expected.set(0, DateTimeUtil.microsFromDays(1));
+      assertThat(operator.localStatistics().result()).isEqualTo(Map.of(expected, 1L));
+      harness.endInput();
+    }
+  }
 
   @BeforeEach
   public void before() throws Exception {

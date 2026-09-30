@@ -48,8 +48,8 @@ public class ManifestFileUtil {
       this.type = primitive;
       this.comparator = Comparators.forType(primitive);
       this.javaClass = (Class<T>) primitive.typeId().javaClass();
-      this.lowerBound = Conversions.fromByteBuffer(primitive, summary.lowerBound());
-      this.upperBound = Conversions.fromByteBuffer(primitive, summary.upperBound());
+      this.lowerBound = Conversions.boundFromByteBuffer(primitive, summary.lowerBound());
+      this.upperBound = Conversions.boundFromByteBuffer(primitive, summary.upperBound());
       this.containsNull = summary.containsNull();
       this.containsNaN = summary.containsNaN() == null ? true : summary.containsNaN();
     }

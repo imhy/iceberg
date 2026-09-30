@@ -21,6 +21,7 @@ package org.apache.iceberg.spark.data;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
+import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -37,6 +38,7 @@ import org.apache.iceberg.parquet.ParquetValueReaders.ReusableEntry;
 import org.apache.iceberg.parquet.ParquetValueReaders.StructReader;
 import org.apache.iceberg.parquet.ParquetValueReaders.UnboxedReader;
 import org.apache.iceberg.parquet.TypeWithSchemaVisitor;
+import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
@@ -220,6 +222,16 @@ public class SparkParquetReaders {
               return new UnboxedReader<>(desc);
             }
           case DATE:
+            if (expected != null
+                && (expected.typeId() == TypeID.TIMESTAMP
+                    || expected.typeId() == TypeID.TIMESTAMP_NANO)) {
+              Preconditions.checkArgument(
+                  Types.TimestampType.withoutZone().equals(expected),
+                  "Cannot promote date to Spark type %s",
+                  expected);
+              return ParquetValueReaders.datesAsTimestamps(desc, ChronoUnit.MICROS);
+            }
+            return new UnboxedReader<>(desc);
           case INT_64:
             return new UnboxedReader<>(desc);
           case TIMESTAMP_MICROS:

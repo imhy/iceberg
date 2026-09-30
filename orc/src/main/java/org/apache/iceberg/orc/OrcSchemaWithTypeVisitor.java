@@ -75,7 +75,13 @@ public abstract class OrcSchemaWithTypeVisitor<T> {
     for (TypeDescription field : fields) {
       int fieldId = ORCSchemaUtil.fieldId(field);
       Types.NestedField iField = struct != null ? struct.field(fieldId) : null;
-      results.add(visit(iField != null ? iField.type() : null, field, visitor));
+      if (iField != null
+          && Boolean.parseBoolean(
+              field.getAttributeValue(ORCSchemaUtil.ICEBERG_INITIAL_DEFAULT_ATTRIBUTE))) {
+        results.add(visitor.initialDefault(iField));
+      } else {
+        results.add(visit(iField != null ? iField.type() : null, field, visitor));
+      }
     }
     return visitor.record(struct, record, names, results);
   }
@@ -112,6 +118,11 @@ public abstract class OrcSchemaWithTypeVisitor<T> {
 
   public T variant(Types.VariantType iVariant, TypeDescription variant, T metadata, T value) {
     throw new UnsupportedOperationException("Variant is not supported");
+  }
+
+  /** Visits the initial default of a field missing from the physical ORC schema. */
+  public T initialDefault(Types.NestedField field) {
+    throw new UnsupportedOperationException("Initial defaults are not supported by this visitor");
   }
 
   public T primitive(Type.PrimitiveType iPrimitive, TypeDescription primitive) {

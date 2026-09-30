@@ -20,6 +20,7 @@ package org.apache.iceberg.flink.data;
 
 import java.math.BigDecimal;
 import java.nio.ByteBuffer;
+import java.time.temporal.ChronoUnit;
 import java.util.UUID;
 import org.apache.avro.generic.GenericData;
 import org.apache.avro.util.Utf8;
@@ -40,6 +41,25 @@ import org.apache.iceberg.util.UUIDUtil;
 public class RowDataUtil {
 
   private RowDataUtil() {}
+
+  static TimestampData timestampFromMicros(long value) {
+    return TimestampData.fromEpochMillis(
+        Math.floorDiv(value, 1_000L), (int) Math.floorMod(value, 1_000L) * 1_000);
+  }
+
+  static TimestampData timestampFromNanos(long value) {
+    return TimestampData.fromEpochMillis(
+        Math.floorDiv(value, 1_000_000L), (int) Math.floorMod(value, 1_000_000L));
+  }
+
+  /** Converts a date to midnight, checking Iceberg's range at the requested timestamp precision. */
+  public static TimestampData timestampFromDays(int days, ChronoUnit unit) {
+    return switch (unit) {
+      case MICROS -> timestampFromMicros(DateTimeUtil.microsFromDays(days));
+      case NANOS -> timestampFromNanos(DateTimeUtil.nanosFromDays(days));
+      default -> throw new IllegalArgumentException("Unsupported timestamp unit: " + unit);
+    };
+  }
 
   public static Object convertConstant(Type type, Object value) {
     if (value == null) {

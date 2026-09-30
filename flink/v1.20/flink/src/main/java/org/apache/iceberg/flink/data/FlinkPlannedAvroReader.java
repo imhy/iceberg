@@ -131,7 +131,11 @@ public class FlinkPlannedAvroReader implements DatumReader<RowData>, SupportsRow
       if (logicalType != null) {
         switch (logicalType.getName()) {
           case "date":
-            // Flink uses the same representation
+            if (partner != null
+                && (partner.typeId() == Type.TypeID.TIMESTAMP
+                    || partner.typeId() == Type.TypeID.TIMESTAMP_NANO)) {
+              return FlinkValueReaders.datesAsTimestamps(partner.asPrimitiveType());
+            }
             return ValueReaders.ints();
 
           case "time-micros":

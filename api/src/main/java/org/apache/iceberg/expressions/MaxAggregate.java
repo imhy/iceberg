@@ -45,6 +45,10 @@ public class MaxAggregate<T> extends ValueAggregate<T> {
       return false;
     }
     boolean hasBound = safeContainsKey(file.upperBounds(), fieldId);
+    if (hasBound && !hasRepresentableBound(type, safeGet(file.upperBounds(), fieldId))) {
+      return false;
+    }
+
     Long valueCount = safeGet(file.valueCounts(), fieldId);
     Long nullCount = safeGet(file.nullValueCounts(), fieldId);
     boolean boundAllNull =

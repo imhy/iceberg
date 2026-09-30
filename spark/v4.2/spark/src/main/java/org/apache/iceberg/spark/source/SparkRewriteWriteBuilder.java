@@ -20,6 +20,7 @@ package org.apache.iceberg.spark.source;
 
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Table;
+import org.apache.iceberg.TableUtil;
 import org.apache.iceberg.spark.SparkSchemaUtil;
 import org.apache.iceberg.spark.SparkUtil;
 import org.apache.iceberg.spark.SparkWriteConf;
@@ -86,7 +87,8 @@ class SparkRewriteWriteBuilder implements WriteBuilder {
 
   private Schema validateWriteSchema() {
     Schema writeSchema = SparkSchemaUtil.convert(schema, info.schema(), caseSensitive);
-    TypeUtil.validateWriteSchema(schema, writeSchema, checkNullability, checkOrdering);
+    TypeUtil.validateWriteSchema(
+        TableUtil.formatVersion(table), schema, writeSchema, checkNullability, checkOrdering);
     return writeSchema;
   }
 }

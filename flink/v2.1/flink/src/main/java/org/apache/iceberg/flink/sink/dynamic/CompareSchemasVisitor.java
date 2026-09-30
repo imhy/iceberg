@@ -26,6 +26,7 @@ import org.apache.iceberg.Schema;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.schema.SchemaWithPartnerVisitor;
 import org.apache.iceberg.types.Type;
+import org.apache.iceberg.types.TypeUtil;
 import org.apache.iceberg.types.Types;
 
 /**
@@ -199,8 +200,7 @@ public class CompareSchemasVisitor
       return true;
     }
 
-    if (dataType.equals(Types.DateType.get())
-        && tableType.equals(Types.TimestampType.withoutZone())) {
+    if (TypeUtil.isDateToTimestampPromotion(dataType, tableType.asPrimitiveType())) {
       return true;
     }
 

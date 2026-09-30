@@ -121,9 +121,8 @@ class VariantExpressionUtil {
         } else if (value.type() == PhysicalType.DATE) {
           return (T)
               (Long)
-                  DateTimeUtil.microsFromTimestamp(
-                      DateTimeUtil.dateFromDays(((Number) value.asPrimitive().get()).intValue())
-                          .atStartOfDay());
+                  DateTimeUtil.microsFromDaysClamped(
+                      ((Number) value.asPrimitive().get()).intValue());
         }
         break;
       case TIMESTAMP_NANO:
@@ -133,9 +132,8 @@ class VariantExpressionUtil {
         } else if (value.type() == PhysicalType.DATE) {
           return (T)
               (Long)
-                  DateTimeUtil.nanosFromTimestamp(
-                      DateTimeUtil.dateFromDays(((Number) value.asPrimitive().get()).intValue())
-                          .atStartOfDay());
+                  DateTimeUtil.nanosFromDaysClamped(
+                      ((Number) value.asPrimitive().get()).intValue());
         }
         break;
       case DATE:

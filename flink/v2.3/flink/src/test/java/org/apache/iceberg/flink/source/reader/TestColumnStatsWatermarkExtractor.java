@@ -26,6 +26,7 @@ import static org.assertj.core.api.Assumptions.assumeThat;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -38,6 +39,7 @@ import org.apache.iceberg.Parameter;
 import org.apache.iceberg.ParameterizedTestExtension;
 import org.apache.iceberg.Parameters;
 import org.apache.iceberg.Schema;
+import org.apache.iceberg.data.GenericRecord;
 import org.apache.iceberg.data.RandomGenericData;
 import org.apache.iceberg.data.Record;
 import org.apache.iceberg.flink.HadoopTableExtension;
@@ -188,6 +190,30 @@ public class TestColumnStatsWatermarkExtractor {
         .hasMessage(
             "Missing statistics for column name = missing_field with fieldId = 10 in file = "
                 + split.task().files().iterator().next().file());
+  }
+
+  @Test
+  void convertsHistoricalDateBounds() throws IOException {
+    Schema dateSchema = new Schema(required(1, "d", Types.DateType.get()));
+    LocalDate date = LocalDate.of(2024, 1, 1);
+    GenericRecord record = GenericRecord.create(dateSchema);
+    record.setField("d", date);
+    IcebergSourceSplit dateSplit =
+        IcebergSourceSplit.fromCombinedScanTask(
+            ReaderUtil.createCombinedScanTask(
+                ImmutableList.of(ImmutableList.of(record)),
+                temporaryFolder,
+                FileFormat.PARQUET,
+                dateSchema));
+    for (Schema promotedSchema :
+        ImmutableList.of(
+            new Schema(required(1, "d", Types.TimestampType.withoutZone())),
+            new Schema(required(1, "d", Types.TimestampNanoType.withoutZone())))) {
+      ColumnStatsWatermarkExtractor extractor =
+          new ColumnStatsWatermarkExtractor(promotedSchema, "d", null);
+      assertThat(extractor.extractWatermark(dateSplit))
+          .isEqualTo(date.atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli());
+    }
   }
 
   private IcebergSourceSplit split(int id) throws IOException {

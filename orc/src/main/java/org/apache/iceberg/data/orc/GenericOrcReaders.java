@@ -37,6 +37,7 @@ import org.apache.iceberg.orc.OrcValueReader;
 import org.apache.iceberg.orc.OrcValueReaders;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
+import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.Types;
 import org.apache.iceberg.util.DateTimeUtil;
 import org.apache.iceberg.util.UUIDUtil;
@@ -111,6 +112,13 @@ public class GenericOrcReaders {
 
   public static OrcValueReader<LocalDate> dates() {
     return DateReader.INSTANCE;
+  }
+
+  static OrcValueReader<LocalDateTime> datesAsTimestamps(Type.PrimitiveType target) {
+    OrcValueReader<Long> reader = OrcValueReaders.datesAsTimestamps(target);
+    return target instanceof Types.TimestampNanoType
+        ? (vector, row) -> DateTimeUtil.timestampFromNanos(reader.nonNullRead(vector, row))
+        : (vector, row) -> DateTimeUtil.timestampFromMicros(reader.nonNullRead(vector, row));
   }
 
   public static OrcValueReader<LocalDateTime> timestamps() {

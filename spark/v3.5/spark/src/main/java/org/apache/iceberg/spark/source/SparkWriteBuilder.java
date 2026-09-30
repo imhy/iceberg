@@ -211,7 +211,11 @@ class SparkWriteBuilder implements WriteBuilder, SupportsDynamicOverwrite, Suppo
       writeSchema = SparkSchemaUtil.convert(mergedSchema, dsSchema, caseSensitive);
 
       TypeUtil.validateWriteSchema(
-          mergedSchema, writeSchema, writeConf.checkNullability(), writeConf.checkOrdering());
+          TableUtil.formatVersion(table),
+          mergedSchema,
+          writeSchema,
+          writeConf.checkNullability(),
+          writeConf.checkOrdering());
 
       // if the validation passed, update the table schema
       update.commit();
@@ -222,7 +226,11 @@ class SparkWriteBuilder implements WriteBuilder, SupportsDynamicOverwrite, Suppo
               : table.schema();
       writeSchema = SparkSchemaUtil.convert(schema, dsSchema, caseSensitive);
       TypeUtil.validateWriteSchema(
-          table.schema(), writeSchema, writeConf.checkNullability(), writeConf.checkOrdering());
+          TableUtil.formatVersion(table),
+          table.schema(),
+          writeSchema,
+          writeConf.checkNullability(),
+          writeConf.checkOrdering());
     }
 
     return writeSchema;

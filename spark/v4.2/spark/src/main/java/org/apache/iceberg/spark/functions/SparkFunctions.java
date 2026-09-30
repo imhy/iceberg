@@ -39,8 +39,15 @@ public class SparkFunctions {
           "bucket", new BucketFunction(),
           "truncate", new TruncateFunction());
 
+  // Functions that can be resolved by name but are hidden from function listings
+  private static final Map<String, UnboundFunction> INTERNAL_FUNCTIONS =
+      ImmutableMap.of(
+          "date_to_timestamp_ntz", new DateToTimestampNtzFunction(),
+          "iceberg_bucket", new BucketFunction());
+
   private static final Map<Class<?>, UnboundFunction> CLASS_TO_FUNCTIONS =
       ImmutableMap.of(
+          DateToTimestampNtzFunction.class, new DateToTimestampNtzFunction(),
           YearsFunction.class, new YearsFunction(),
           MonthsFunction.class, new MonthsFunction(),
           DaysFunction.class, new DaysFunction(),
@@ -61,7 +68,9 @@ public class SparkFunctions {
 
   public static UnboundFunction load(String name) {
     // function resolution is case-insensitive to match the existing Spark behavior for functions
-    return FUNCTIONS.get(name.toLowerCase(Locale.ROOT));
+    String lowerCaseName = name.toLowerCase(Locale.ROOT);
+    UnboundFunction function = FUNCTIONS.get(lowerCaseName);
+    return function != null ? function : INTERNAL_FUNCTIONS.get(lowerCaseName);
   }
 
   public static UnboundFunction loadFunctionByClass(Class<?> functionClass) {

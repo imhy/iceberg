@@ -37,6 +37,7 @@ import org.apache.iceberg.parquet.ParquetValueReader;
 import org.apache.iceberg.parquet.ParquetValueReaders;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.types.Types.StructType;
+import org.apache.iceberg.util.DateTimeUtil;
 import org.apache.parquet.column.ColumnDescriptor;
 import org.apache.parquet.schema.LogicalTypeAnnotation;
 import org.apache.parquet.schema.MessageType;
@@ -72,6 +73,16 @@ public class GenericParquetReaders extends BaseParquetReaders<Record> {
   @Override
   protected ParquetValueReader<?> dateReader(ColumnDescriptor desc) {
     return new GenericParquetReaders.DateReader(desc);
+  }
+
+  @Override
+  ParquetValueReader<?> dateAsTimestampReader(ColumnDescriptor desc, ChronoUnit unit) {
+    return ParquetValueReaders.datesAsTimestamps(
+        desc,
+        unit,
+        unit == ChronoUnit.NANOS
+            ? DateTimeUtil::timestampFromNanos
+            : DateTimeUtil::timestampFromMicros);
   }
 
   @Override

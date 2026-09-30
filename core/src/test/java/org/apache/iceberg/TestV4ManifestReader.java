@@ -47,6 +47,7 @@ import org.apache.iceberg.relocated.com.google.common.collect.Iterables;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.transforms.Transform;
 import org.apache.iceberg.transforms.Transforms;
+import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.TypeUtil;
 import org.apache.iceberg.types.Types;
 import org.junit.jupiter.api.Named;
@@ -1885,6 +1886,73 @@ class TestV4ManifestReader {
   private ManifestFile writeManifest(
       FileFormat format, Types.StructType partitionType, TrackedFile file) throws IOException {
     return writeManifest(format, partitionType, ImmutableList.of(file));
+  }
+
+  @ParameterizedTest
+  @FieldSource("MANIFEST_FORMATS")
+  void dateBoundsOutsideTimestampRangeAreUnknown(FileFormat format) throws IOException {
+    Schema dateSchema = new Schema(optional(1, "d", Types.DateType.get()));
+    Types.StructType dateStats = StatsUtil.statsReadSchema(dateSchema, List.of(1));
+    Schema writeSchema = TrackedFile.schema(UNPARTITIONED_TYPE, dateStats);
+    for (Type.PrimitiveType target :
+        List.of(Types.TimestampType.withoutZone(), Types.TimestampNanoType.withoutZone())) {
+      long unitsPerDay =
+          target.typeId() == Type.TypeID.TIMESTAMP ? 86_400_000_000L : 86_400_000_000_000L;
+      int overflowDay = (int) (Long.MAX_VALUE / unitsPerDay) + 1;
+      Schema promoted = new Schema(optional(1, "d", target));
+      for (int day : new int[] {-overflowDay, overflowDay}) {
+        ContentStatsStruct stats = new ContentStatsStruct(dateStats);
+        stats.setStats(
+            1,
+            new FieldStatsStruct<>(
+                dateStats.fieldType("d").asStructType(), day, day, true, RECORD_COUNT, 0, 0, null));
+        OutputFile out = IO.newOutputFile(format.addExtension("overflow." + System.nanoTime()));
+        try (FileAppender<StructLike> appender =
+            InternalData.write(format, out).schema(writeSchema).named("tracked_file").build()) {
+          appender.add(
+              (StructLike)
+                  unpartitionedDataFileWithStats("s3://bucket/table/overflow.parquet", stats));
+        }
+        ManifestFile manifest = v4Manifest(out.location());
+        V4ManifestReader.Builder builder =
+            V4ManifestReader.builder(manifest, IO, promoted, UNPARTITIONED_SPECS)
+                .metricsConfig(MetricsTestUtil.from(Map.of(), promoted));
+        TrackedFile read = readOne(builder);
+        assertThat(read.contentStats().statsFor(1).lowerBound()).isNull();
+        assertThat(read.contentStats().statsFor(1).upperBound()).isNull();
+        assertThat(
+                read(
+                    V4ManifestReader.builder(manifest, IO, promoted, UNPARTITIONED_SPECS)
+                        .forScanPlanning()
+                        .filter(
+                            Expressions.notEqual(
+                                Expressions.day("d"),
+                                (int)
+                                    Math.floorDiv(
+                                        day > 0 ? Long.MAX_VALUE : Long.MIN_VALUE, unitsPerDay)))))
+            .hasSize(1);
+        Schema rewriteSchema =
+            TrackedFile.schema(UNPARTITIONED_TYPE, StatsUtil.statsReadSchema(promoted, List.of(1)));
+        OutputFile rewritten =
+            IO.newOutputFile(format.addExtension("rewritten." + System.nanoTime()));
+        try (FileAppender<StructLike> appender =
+            InternalData.write(format, rewritten)
+                .schema(rewriteSchema)
+                .named("tracked_file")
+                .build()) {
+          appender.add((StructLike) read);
+        }
+        assertThat(
+                readOne(
+                        V4ManifestReader.builder(
+                                v4Manifest(rewritten.location()), IO, promoted, UNPARTITIONED_SPECS)
+                            .metricsConfig(MetricsTestUtil.from(Map.of(), promoted)))
+                    .contentStats()
+                    .statsFor(1)
+                    .lowerBound())
+            .isNull();
+      }
+    }
   }
 
   private ManifestFile writeManifest(

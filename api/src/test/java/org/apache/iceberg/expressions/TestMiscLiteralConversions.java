@@ -27,9 +27,49 @@ import java.util.List;
 import java.util.UUID;
 import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.Types;
+import org.apache.iceberg.util.DateTimeUtil;
 import org.junit.jupiter.api.Test;
 
 public class TestMiscLiteralConversions {
+  @Test
+  void dateToZonelessTimestamps() {
+    Literal<Integer> date = Literal.of(-1).to(Types.DateType.get());
+    assertThat(date.to(Types.TimestampType.withoutZone()).value())
+        .isEqualTo(DateTimeUtil.microsFromDays(-1));
+    assertThat(date.to(Types.TimestampNanoType.withoutZone()).value())
+        .isEqualTo(DateTimeUtil.nanosFromDays(-1));
+    assertThat(date.to(Types.TimestampType.withZone())).isNull();
+    assertThat(date.to(Types.TimestampNanoType.withZone())).isNull();
+  }
+
+  @Test
+  void dateToTimestampUsesRangeSentinels() {
+    for (Type target :
+        List.of(Types.TimestampType.withoutZone(), Types.TimestampNanoType.withoutZone())) {
+      assertThat(Literal.of(Integer.MAX_VALUE).to(Types.DateType.get()).to(target))
+          .isSameAs(Literals.aboveMax());
+      assertThat(Literal.of(Integer.MIN_VALUE).to(Types.DateType.get()).to(target))
+          .isSameAs(Literals.belowMin());
+    }
+  }
+
+  @Test
+  void bindsOutOfRangeDatePredicates() {
+    Types.StructType struct =
+        Types.StructType.of(
+            Types.NestedField.required(1, "ts", Types.TimestampNanoType.withoutZone()));
+    Literal<Integer> future = Literal.of("9999-12-31").to(Types.DateType.get());
+    Literal<Integer> past = Literal.of("0001-01-01").to(Types.DateType.get());
+    assertThat(Binder.bind(struct, Expressions.lessThan("ts", future), true))
+        .isEqualTo(Expressions.alwaysTrue());
+    assertThat(Binder.bind(struct, Expressions.greaterThan("ts", past), true))
+        .isEqualTo(Expressions.alwaysTrue());
+    assertThat(Binder.bind(struct, Expressions.equal("ts", future), true))
+        .isEqualTo(Expressions.alwaysFalse());
+    assertThat(Binder.bind(struct, Expressions.in("ts", past, future), true))
+        .isEqualTo(Expressions.alwaysFalse());
+  }
+
   @Test
   public void testIdentityConversions() {
     List<Pair<Literal<?>, Type>> pairs =
@@ -260,8 +300,6 @@ public class TestMiscLiteralConversions {
         Types.DoubleType.get(),
         Types.TimeType.get(),
         Types.TimestampType.withZone(),
-        Types.TimestampType.withoutZone(),
-        Types.TimestampNanoType.withoutZone(),
         Types.TimestampNanoType.withZone(),
         Types.DecimalType.of(9, 4),
         Types.StringType.get(),

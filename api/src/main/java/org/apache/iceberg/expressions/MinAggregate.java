@@ -45,6 +45,10 @@ public class MinAggregate<T> extends ValueAggregate<T> {
       return false;
     }
     boolean hasBound = safeContainsKey(file.lowerBounds(), fieldId);
+    if (hasBound && !hasRepresentableBound(type, safeGet(file.lowerBounds(), fieldId))) {
+      return false;
+    }
+
     Long valueCount = safeGet(file.valueCounts(), fieldId);
     Long nullCount = safeGet(file.nullValueCounts(), fieldId);
     boolean boundAllNull =

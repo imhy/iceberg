@@ -18,6 +18,7 @@
  */
 package org.apache.iceberg.data.parquet;
 
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -115,6 +116,11 @@ public class InternalReader<T extends StructLike> extends BaseParquetReaders<T> 
   @Override
   protected ParquetValueReader<?> dateReader(ColumnDescriptor desc) {
     return new ParquetValueReaders.UnboxedReader<>(desc);
+  }
+
+  @Override
+  ParquetValueReader<?> dateAsTimestampReader(ColumnDescriptor desc, ChronoUnit unit) {
+    return ParquetValueReaders.datesAsTimestamps(desc, unit);
   }
 
   @Override

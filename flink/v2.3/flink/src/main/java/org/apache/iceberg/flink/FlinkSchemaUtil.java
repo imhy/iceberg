@@ -156,7 +156,8 @@ public class FlinkSchemaUtil {
     schema = TypeUtil.reassignDoc(schema, baseSchema);
 
     // fix types that can't be represented in Flink (UUID)
-    Schema fixedSchema = FlinkFixupTypes.fixup(schema, baseSchema);
+    Schema fixedSchema =
+        TypeUtil.reassignDefaults(FlinkFixupTypes.fixup(schema, baseSchema), baseSchema);
     if (flinkSchema.getPrimaryKey().isPresent()) {
       return freshIdentifierFieldIds(fixedSchema, flinkSchema.getPrimaryKey().get().getColumns());
     } else {
@@ -186,7 +187,8 @@ public class FlinkSchemaUtil {
     schema = TypeUtil.reassignDoc(schema, baseSchema);
 
     // fix types that can't be represented in Flink (UUID)
-    Schema fixedSchema = FlinkFixupTypes.fixup(schema, baseSchema);
+    Schema fixedSchema =
+        TypeUtil.reassignDefaults(FlinkFixupTypes.fixup(schema, baseSchema), baseSchema);
     return flinkSchema
         .getPrimaryKey()
         .map(pk -> freshIdentifierFieldIds(fixedSchema, pk.getColumns()))

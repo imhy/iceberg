@@ -75,6 +75,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public class FlinkSink {
+  private static final int LEGACY_FORMAT_VERSION = 1;
   private static final Logger LOG = LoggerFactory.getLogger(FlinkSink.class);
 
   private static final String ICEBERG_STREAM_WRITER_NAME =
@@ -445,6 +446,11 @@ public class FlinkSink {
         }
       }
 
+      Schema inputSchema =
+          resolvedSchema != null
+              ? FlinkSchemaUtil.convert(resolvedSchema)
+              : tableSchema != null ? FlinkSchemaUtil.convert(tableSchema) : null;
+      this.table = SinkUtil.serializableTable(table, tableLoader, inputSchema);
       flinkWriteConf = new FlinkWriteConf(table, writeOptions, readableConfig);
 
       // Find out the equality field id list based on the user-provided equality field column names.
@@ -453,8 +459,8 @@ public class FlinkSink {
 
       RowType flinkRowType =
           resolvedSchema != null
-              ? toFlinkRowType(table.schema(), resolvedSchema)
-              : toFlinkRowType(table.schema(), tableSchema);
+              ? toFlinkRowType(SinkUtil.formatVersion(table), table.schema(), resolvedSchema)
+              : toFlinkRowType(SinkUtil.formatVersion(table), table.schema(), tableSchema);
       int writerParallelism =
           flinkWriteConf.writeParallelism() == null
               ? rowDataInput.getParallelism()
@@ -577,7 +583,10 @@ public class FlinkSink {
         }
       }
 
-      SerializableTable serializableTable = (SerializableTable) SerializableTable.copyOf(table);
+      SerializableTable serializableTable =
+          table instanceof SerializableTable serialized
+              ? serialized
+              : (SerializableTable) SerializableTable.copyOf(table);
       Duration tableRefreshInterval = flinkWriteConf.tableRefreshInterval();
 
       SerializableSupplier<Table> tableSupplier;
@@ -691,6 +700,7 @@ public class FlinkSink {
                       statisticsOrRecordTypeInformation,
                       new DataStatisticsOperatorFactory(
                           iSchema,
+                          flinkRowType,
                           sortOrder,
                           writerParallelism,
                           statisticsType,
@@ -702,7 +712,7 @@ public class FlinkSink {
           }
 
           return shuffleStream
-              .partitionCustom(new RangePartitioner(iSchema, sortOrder), r -> r)
+              .partitionCustom(new RangePartitioner(iSchema, flinkRowType, sortOrder), r -> r)
               .flatMap(
                   (FlatMapFunction<StatisticsOrRecord, RowData>)
                       (statisticsOrRecord, out) -> {
@@ -729,10 +739,16 @@ public class FlinkSink {
    */
   @Deprecated
   static RowType toFlinkRowType(Schema schema, TableSchema requestedSchema) {
+    // Schema-only callers retain the legacy promotion rules.
+    return toFlinkRowType(LEGACY_FORMAT_VERSION, schema, requestedSchema);
+  }
+
+  @Deprecated
+  static RowType toFlinkRowType(int formatVersion, Schema schema, TableSchema requestedSchema) {
     if (requestedSchema != null) {
       // Convert the flink schema to iceberg schema using the table schema as the reference.
       Schema writeSchema = FlinkSchemaUtil.convert(schema, requestedSchema);
-      TypeUtil.validateWriteSchema(schema, writeSchema, true, true);
+      TypeUtil.validateWriteSchema(formatVersion, schema, writeSchema, true, true);
 
       // We use this flink schema to read values from RowData. The flink's TINYINT and SMALLINT will
       // be promoted to iceberg INTEGER, that means if we use iceberg's table schema to read TINYINT
@@ -745,10 +761,15 @@ public class FlinkSink {
   }
 
   static RowType toFlinkRowType(Schema schema, ResolvedSchema requestedSchema) {
+    // Schema-only callers retain the legacy promotion rules.
+    return toFlinkRowType(LEGACY_FORMAT_VERSION, schema, requestedSchema);
+  }
+
+  static RowType toFlinkRowType(int formatVersion, Schema schema, ResolvedSchema requestedSchema) {
     if (requestedSchema != null) {
       // Convert the flink schema to iceberg schema using the table schema as the reference.
       Schema writeSchema = FlinkSchemaUtil.convert(schema, requestedSchema);
-      TypeUtil.validateWriteSchema(schema, writeSchema, true, true);
+      TypeUtil.validateWriteSchema(formatVersion, schema, writeSchema, true, true);
 
       // We use this flink schema to read values from RowData. The flink's TINYINT and SMALLINT will
       // be promoted to iceberg INTEGER, that means if we use iceberg's table schema to read TINYINT

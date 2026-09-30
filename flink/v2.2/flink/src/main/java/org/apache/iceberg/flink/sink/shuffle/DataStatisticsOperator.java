@@ -33,6 +33,7 @@ import org.apache.flink.streaming.api.operators.OneInputStreamOperator;
 import org.apache.flink.streaming.api.operators.StreamOperatorParameters;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.table.data.RowData;
+import org.apache.flink.table.types.logical.RowType;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.SortKey;
 import org.apache.iceberg.SortOrder;
@@ -80,9 +81,29 @@ public class DataStatisticsOperator extends AbstractStreamOperator<StatisticsOrR
       OperatorEventGateway operatorEventGateway,
       int downstreamParallelism,
       StatisticsType statisticsType) {
+    this(
+        parameters,
+        operatorName,
+        schema,
+        FlinkSchemaUtil.convert(schema),
+        sortOrder,
+        operatorEventGateway,
+        downstreamParallelism,
+        statisticsType);
+  }
+
+  DataStatisticsOperator(
+      StreamOperatorParameters<StatisticsOrRecord> parameters,
+      String operatorName,
+      Schema schema,
+      RowType rowType,
+      SortOrder sortOrder,
+      OperatorEventGateway operatorEventGateway,
+      int downstreamParallelism,
+      StatisticsType statisticsType) {
     super(parameters);
     this.operatorName = operatorName;
-    this.rowDataWrapper = new RowDataWrapper(FlinkSchemaUtil.convert(schema), schema.asStruct());
+    this.rowDataWrapper = new RowDataWrapper(rowType, schema.asStruct());
     this.sortKey = new SortKey(schema, sortOrder);
     this.operatorEventGateway = operatorEventGateway;
     this.downstreamParallelism = downstreamParallelism;

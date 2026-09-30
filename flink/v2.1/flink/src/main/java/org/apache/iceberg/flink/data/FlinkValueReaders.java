@@ -40,6 +40,7 @@ import org.apache.iceberg.avro.ValueReader;
 import org.apache.iceberg.avro.ValueReaders;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
+import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.Types;
 import org.apache.iceberg.util.Pair;
 
@@ -61,6 +62,14 @@ public class FlinkValueReaders {
 
   static ValueReader<Integer> timeMicros() {
     return TimeMicrosReader.INSTANCE;
+  }
+
+  static ValueReader<TimestampData> datesAsTimestamps(Type.PrimitiveType target) {
+    ValueReader<Long> reader = ValueReaders.datesAsTimestamps(target);
+    if (target.typeId() == Type.TypeID.TIMESTAMP_NANO) {
+      return (decoder, reuse) -> RowDataUtil.timestampFromNanos(reader.read(decoder, null));
+    }
+    return (decoder, reuse) -> RowDataUtil.timestampFromMicros(reader.read(decoder, null));
   }
 
   static ValueReader<TimestampData> timestampMills() {

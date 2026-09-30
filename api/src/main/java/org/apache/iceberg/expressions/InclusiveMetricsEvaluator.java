@@ -26,6 +26,7 @@ import org.apache.iceberg.ContentFile;
 import org.apache.iceberg.DataFile;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.types.Conversions;
+import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.Types.StructType;
 import org.apache.iceberg.variants.Variant;
 import org.apache.iceberg.variants.VariantObject;
@@ -127,7 +128,7 @@ public class InclusiveMetricsEvaluator {
     protected <T> T lowerBound(BoundReference<T> ref) {
       int id = ref.fieldId();
       if (lowerBounds != null && lowerBounds.containsKey(id)) {
-        return Conversions.fromByteBuffer(ref.ref().type(), lowerBounds.get(id));
+        return Conversions.boundFromByteBuffer(ref.ref().type(), lowerBounds.get(id));
       }
 
       return null;
@@ -137,10 +138,33 @@ public class InclusiveMetricsEvaluator {
     protected <T> T upperBound(BoundReference<T> ref) {
       int id = ref.fieldId();
       if (upperBounds != null && upperBounds.containsKey(id)) {
-        return Conversions.fromByteBuffer(ref.ref().type(), upperBounds.get(id));
+        return Conversions.boundFromByteBuffer(ref.ref().type(), upperBounds.get(id));
       }
 
       return null;
+    }
+
+    @Override
+    protected boolean hasExactBounds(BoundReference<?> ref) {
+      if (ref.type().typeId() != Type.TypeID.TIMESTAMP
+          && ref.type().typeId() != Type.TypeID.TIMESTAMP_NANO) {
+        return true;
+      }
+
+      ByteBuffer lower = lowerBounds != null ? lowerBounds.get(ref.fieldId()) : null;
+      ByteBuffer upper = upperBounds != null ? upperBounds.get(ref.fieldId()) : null;
+      try {
+        if (lower != null && lower.remaining() == Integer.BYTES) {
+          Conversions.fromByteBuffer(ref.type(), lower);
+        }
+        if (upper != null && upper.remaining() == Integer.BYTES) {
+          Conversions.fromByteBuffer(ref.type(), upper);
+        }
+        return true;
+      } catch (ArithmeticException e) {
+        // Saturated bounds cannot establish a single value, including after a transform.
+        return false;
+      }
     }
 
     @Override

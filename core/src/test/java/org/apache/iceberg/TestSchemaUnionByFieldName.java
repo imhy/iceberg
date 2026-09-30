@@ -22,11 +22,14 @@ import static org.apache.iceberg.types.Types.NestedField.optional;
 import static org.apache.iceberg.types.Types.NestedField.required;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.apache.iceberg.expressions.Literal;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
+import org.apache.iceberg.schema.UnionByNameVisitor;
 import org.apache.iceberg.types.EdgeAlgorithm;
 import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.Types;
@@ -54,6 +57,30 @@ import org.apache.iceberg.types.Types.VariantType;
 import org.junit.jupiter.api.Test;
 
 public class TestSchemaUnionByFieldName {
+
+  @Test
+  void ignoresEquivalentDefaultsFromNarrowerNumericTypes() {
+    for (Type source : List.of(IntegerType.get(), FloatType.get())) {
+      Type target = source.equals(IntegerType.get()) ? LongType.get() : DoubleType.get();
+      Schema incoming =
+          new Schema(
+              NestedField.optional("value")
+                  .withId(1)
+                  .ofType(source)
+                  .withWriteDefault(Literal.of(5).to(source))
+                  .build());
+      Schema existing =
+          new Schema(
+              NestedField.optional("value")
+                  .withId(1)
+                  .ofType(target)
+                  .withWriteDefault(Literal.of(5).to(target))
+                  .build());
+      UpdateSchema update = mock(UpdateSchema.class);
+      UnionByNameVisitor.visit(3, update, existing, incoming, true);
+      verifyNoInteractions(update);
+    }
+  }
 
   private static List<? extends Type> primitiveTypes() {
     return Lists.newArrayList(
