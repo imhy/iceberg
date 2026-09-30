@@ -279,6 +279,7 @@ final class SparkTypePromotion {
     return value -> value == null ? null : convert.apply(value);
   }
 
+  @SuppressWarnings("unchecked")
   private static Function<Object, Object> structConverter(StructType from, StructType to) {
     Preconditions.checkArgument(
         from.fields().length == to.fields().length,
@@ -297,6 +298,9 @@ final class SparkTypePromotion {
         conversions.add(converter(fields[i].dataType(), to.fields()[i].dataType()));
       }
     }
+    int[] changedPositions = changed.stream().mapToInt(Integer::intValue).toArray();
+    Function<Object, Object>[] fieldConversions = conversions.toArray(new Function[0]);
+    StructField[] targetFields = to.fields();
     return value -> {
       InternalRow row = (InternalRow) value;
       Preconditions.checkArgument(
@@ -304,15 +308,14 @@ final class SparkTypePromotion {
           "Input row does not match the schema field count: %s != %s",
           row.numFields(),
           fields.length);
-      Object[] values = new Object[changed.size()];
+      Object[] values = new Object[changedPositions.length];
       for (int i = 0; i < values.length; i++) {
-        int pos = changed.get(i);
+        int pos = changedPositions[i];
         values[i] =
-            conversions
-                .get(i)
-                .apply(row.isNullAt(pos) ? null : row.get(pos, fields[pos].dataType()));
+            fieldConversions[i].apply(
+                row.isNullAt(pos) ? null : row.get(pos, fields[pos].dataType()));
       }
-      return new PromotedInternalRow(row, to.fields(), positions, values);
+      return new PromotedInternalRow(row, targetFields, positions, values);
     };
   }
 
