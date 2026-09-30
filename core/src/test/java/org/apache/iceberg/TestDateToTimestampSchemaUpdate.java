@@ -554,8 +554,8 @@ class TestDateToTimestampSchemaUpdate {
       UpdateSchema update = table.updateSchema();
       if (day < Long.MIN_VALUE / units || day > Long.MAX_VALUE / units) {
         assertThatThrownBy(() -> update.unionByNameWith(incoming))
-            .isInstanceOf(ArithmeticException.class)
-            .hasMessage("long overflow");
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("Cannot cast default value");
         assertThat(reload(table).schema().asStruct()).isEqualTo(original.asStruct());
       } else {
         update.unionByNameWith(incoming).commit();

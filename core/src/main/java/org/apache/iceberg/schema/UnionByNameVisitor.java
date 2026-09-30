@@ -24,7 +24,6 @@ import org.apache.iceberg.Schema;
 import org.apache.iceberg.UpdateSchema;
 import org.apache.iceberg.expressions.Literal;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
-import org.apache.iceberg.types.Conversions;
 import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.TypeUtil;
 import org.apache.iceberg.types.Types;
@@ -196,14 +195,9 @@ public class UnionByNameVisitor extends SchemaWithPartnerVisitor<Integer, Boolea
     boolean needsTypeUpdate = !isIgnorableTypeUpdate(existingField.type(), field.type());
     boolean needsDocUpdate = field.doc() != null && !field.doc().equals(existingField.doc());
     Literal<?> writeDefault = field.writeDefaultLiteral();
-    if (!needsTypeUpdate
-        && writeDefault != null
-        && existingField.type().isPrimitiveType()
-        && TypeUtil.isDateToTimestampPromotion(
-            field.type(), existingField.type().asPrimitiveType())) {
-      // Defaults must be representable even though predicate literals may use range sentinels.
-      Conversions.fromByteBuffer(existingField.type(), writeDefault.toByteBuffer());
-      writeDefault = writeDefault.to(existingField.type());
+    if (!needsTypeUpdate && writeDefault != null && existingField.type().isPrimitiveType()) {
+      writeDefault =
+          Types.NestedField.from(field).ofType(existingField.type()).build().writeDefaultLiteral();
     }
     boolean needsDefaultUpdate =
         writeDefault != null && !writeDefault.value().equals(existingField.writeDefault());
