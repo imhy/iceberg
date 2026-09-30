@@ -45,13 +45,8 @@ public class MinAggregate<T> extends ValueAggregate<T> {
       return false;
     }
     boolean hasBound = safeContainsKey(file.lowerBounds(), fieldId);
-    if (hasBound) {
-      try {
-        evaluateRef(file);
-      } catch (ArithmeticException e) {
-        // An unrepresentable conservative bound cannot determine an exact aggregate.
-        return false;
-      }
+    if (hasBound && !hasRepresentableBound(type, safeGet(file.lowerBounds(), fieldId))) {
+      return false;
     }
 
     Long valueCount = safeGet(file.valueCounts(), fieldId);
